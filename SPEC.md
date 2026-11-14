@@ -1,6 +1,6 @@
 # KOReader Dash: Specification
 
-An always-on dashboard for a Kindle Paperwhite 4. It shows the date, time and battery, values sent to it over HTTP (weather and a todo count), and an inbox of messages you can mark as read.
+An always-on dashboard for a Kindle Paperwhite 4. It shows the date, time and battery, values sent to it over HTTP (weather, a todo count and AI usage), and an inbox of messages you can mark as read.
 
 **Status:** in progress. See the [build plan](#7-build-plan).
 **Target:** Kindle Paperwhite 4 with KOReader v2026.07.1. Source references were read from KOReader `master`.
@@ -50,6 +50,12 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 │ Drain: −4.1%/h                       │
 │ about 11 h left · 2h 10m awake       │
 ├──────────────────────────────────────┤
+│ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐  │
+│ │Grok  │ │Claude│ │DSeek │ │Gemini│  │
+│ │17%   │ │35%   │ │¥110  │ │No    │  │
+│ │▓░░░░░│ │▓▓░░░░│ │left  │ │data  │  │
+│ │Nov 20│ │week  │ │      │ │yet   │  │
+│ └──────┘ └──────┘ └──────┘ └──────┘  │
 │ Inbox (2 unread)           < 1/2 >   │
 │ ──────────────────────────────────── │
 │ Build failed                 [ Read ]│
@@ -64,7 +70,8 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 ```
 
 - The page covers the whole screen with an opaque background.
-- Today is shown inverted on the calendar, which is laid out with Sunday first and rebuilt when the date changes.
+- Today is shown inverted on the calendar, which is laid out with Sunday first and rebuilt when the date changes. The calendar is a little smaller than before, to make room for the usage row.
+- **AI usage:** a row of four equal tiles under the clock, for Grok, Claude, DeepSeek and Gemini, always in that order. Each tile has the provider (or the sender's `label`) with the time it was last updated on the right, a headline (a percentage, a balance, a spend, or the sender's own `headline`), a bar when a percentage is known, and one line with the sender's `detail` and the reset time. A provider with nothing sent shows **No data yet**. Values are **stale** after 24 hours, after their `expires_at`, or once their `resets_at` has passed: the title row then reads `stale Nov 12` and the bar turns grey, so an old number is never mistaken for a current one. Only a tile turning stale (or fresh) rebuilds the screen. Code: `dash_usage.lua` (pure, tested) and `Dashboard:buildUsage`.
 - Missing values, or weather past its `expires_at`, show `—`.
 - **Inbox order:** only unread messages appear, with `high` priority first, then oldest first. High priority messages are bold and marked `!`.
 - **Preview:** up to two lines of the body as plain text, with Markdown syntax removed.
@@ -154,6 +161,28 @@ The dashboard displays these fields. Any other fields are stored and returned by
 }
 ```
 
+`usage` holds the AI usage tiles. Every field is optional; keys other than these four providers are stored but not shown.
+
+```json
+"usage": {
+  "grok":      { "used_pct": 17.4, "resets_at": 1795217040, "label": "Grok Bot", "updated_at": 1794637579 },
+  "anthropic": { "used_pct": 35, "headline": "35% · 5h 9%", "detail": "week", "resets_at": 1795050000, "updated_at": 1794637579 },
+  "deepseek":  { "balance": 110.0, "currency": "CNY", "updated_at": 1794637579 },
+  "gemini":    { "spent": 3.2, "currency": "USD", "detail": "Nov", "updated_at": 1794637579 }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `used_pct` | Share of the plan used, 0 to 100. Shown as the headline and a bar |
+| `balance`, `spent`, `currency` | Money left or spent; `currency` defaults to `USD` (`CNY` shows `¥`) |
+| `headline` | Replaces the headline built from the numbers, at most 40 bytes |
+| `detail` | A short line, at most 60 bytes, shared with the reset time |
+| `label` | Replaces the tile title, at most 24 bytes |
+| `resets_at`, `updated_at`, `expires_at` | Unix seconds. Without `expires_at`, values go stale 24 hours after `updated_at` |
+
+`scripts/ai-usage.sh` fills these in ([section 6](#ai-usage)).
+
 `PUT /v1/state` follows [JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386): only the fields you send change.
 
 | In the request | Effect |
@@ -237,6 +266,7 @@ plugin/dash.koplugin/
 ├── dash_store.lua       # state blob, inbox, JSON file
 ├── dash_power.lua       # keep-awake
 ├── dash_time.lua        # Eastern time and month layouts
+├── dash_usage.lua       # AI usage tiles: labels, staleness
 ├── dash_battery.lua     # battery drain history and rate
 ├── dash_dashboard.lua     # fullscreen widget
 ├── dash_message_view.lua  # fullscreen message reader
@@ -292,6 +322,8 @@ Everything lives under `koreader/settings/`, so it comes back after a restart.
 | `dash_data.json` | The state blob and the message index, including previews |
 | `dash_messages/<n>.md` | One file per message body, named by sequence number |
 | `dash_config.json` | The access token |
+| `dash_restart_request` | Created by `scripts/deploy.sh`; the plugin restarts KOReader and deletes it |
+| `dash_open_request` | Opens Dash on the next start, then is deleted. Created by `scripts/deploy.sh`, and by a restart made while Dash is open |
 
 - **Why bodies are separate:** 100 messages of up to 256 KB each would make one file of up to 25 MB, rewritten on every change. The index stays small instead.
 - **Why numbers, not ids:** ids may contain characters such as `:`, which the Kindle's filesystem rejects.
@@ -426,6 +458,19 @@ While fetching is on, it overwrites any weather sent over HTTP at the next fetch
 
 Both bodies end with the working directory, and `data` holds the first 8 characters of the session id and the directory. The hook runs with `async: true` and curl gives up after 4 seconds, so a closed dashboard or a sleeping Kindle never slows Claude Code; the message is simply skipped.
 
+### AI usage
+
+`scripts/ai-usage.sh` fetches what has an API, takes the rest from flags, and sends one `PUT /v1/state` with only the providers it has new values for. Keys come from the environment or `.env` (git-ignored) and are never printed. Run it by hand, or from `launchd`/cron every 15 minutes.
+
+| Tile | Source | Setup |
+|---|---|---|
+| DeepSeek | `GET https://api.deepseek.com/user/balance`, documented. Shows the balance, USD if the account has both currencies | `DEEPSEEK_API_KEY` |
+| Claude | `GET https://api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20`: the 7-day and 5-hour figures Claude Code's `/usage` shows. **Undocumented**, so it may stop working; the tile then goes stale rather than showing a wrong number | `CLAUDE_OAUTH_TOKEN`, or `KDASH_CLAUDE_FROM_KEYCHAIN=1` to read Claude Code's login from the macOS Keychain on each run |
+| Grok | Plan usage (Grok Bot, SuperGrok) has no API, so it's sent by hand: `--grok-pct 17.4 --grok-resets 2026-11-20T23:24:00Z`. For xAI API credits instead, the documented management API (`GET https://management-api.x.ai/v1/billing/teams/{team}/prepaid/balance`) | `XAI_MANAGEMENT_KEY` and `XAI_TEAM_ID` (optional) |
+| Gemini | No usage or balance API for Gemini API keys; spend is only in Google Cloud Billing. Sent by hand: `--gemini-spent 3.20 --gemini-detail Nov` | none |
+
+Every provider takes `--<provider>-pct`, `-resets`, `-spent`, `-balance`, `-currency`, `-detail`, `-label`, `-headline` and `-clear`; an empty text value removes that field. Hand-set values count as updated now. `--dry-run` prints the JSON instead of sending it.
+
 ### Todo count
 
 `senders/todo-mock` sends a made-up count by updating `todo.count`. A real source later only needs to do the same.
@@ -468,6 +513,8 @@ If `/ping` proves unreliable while idle, stop and switch to the Kindle polling a
 | Where does the todo count come from? | A mock sender for now. The real source is still to be chosen. |
 | What location should weather use? | New York City (40.7128, -74.0060). |
 | Where should weather come from? | Fetched by the Kindle from Open-Meteo, rather than sent from the Mac. |
+| How do AI usage tiles get data? | Pushed from the Mac into the state blob, like the todo count. Most of it needs keys that shouldn't live on the Kindle, and two of the four have no API at all. |
+| Rotate pages to fit the usage tiles? | No. One row of four short tiles fits under the clock, with a smaller calendar, and the inbox keeps two messages per page. Everything stays visible at a glance, with no timed full-screen redraws. |
 
 ---
 

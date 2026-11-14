@@ -1,6 +1,7 @@
 #!/bin/sh
 # Installs the plugin on the Kindle over SSH, then verifies every file.
-# Then asks KOReader to restart so the new code loads; pass --no-restart to skip that.
+# Then asks KOReader to restart so the new code loads, and to open Dash once it's back;
+# pass --no-restart to skip both.
 # The restart needs the plugin already running, so the very first install needs a manual one.
 set -eu
 cd "$(dirname "$0")/.."
@@ -34,7 +35,8 @@ echo "Installed to $HOST:$PLUGINS/dash.koplugin"
 
 [ "${1:-}" = "--no-restart" ] && exit 0
 REQUEST=/mnt/us/koreader/settings/dash_restart_request
-kindle "touch $REQUEST"
+# Read by the new code on startup: it opens Dash and deletes the file.
+kindle "touch /mnt/us/koreader/settings/dash_open_request && touch $REQUEST"
 # The plugin deletes the request when it acts on it, within a couple of seconds.
 for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 1

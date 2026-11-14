@@ -1,4 +1,4 @@
--- Fullscreen dashboard: clock, calendar, state values, inbox, diagnostics and an Exit button.
+-- Fullscreen dashboard: clock, calendar, state values, AI usage tiles, inbox, diagnostics and an Exit button.
 
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
@@ -24,6 +24,7 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local _ = require("gettext")
 local DashTime = require("dash_time")
 local MessageView = require("dash_message_view")
+local Usage = require("dash_usage")
 local Screen = Device.screen
 
 local FULL_REFRESH_EVERY_MINUTES = 60
@@ -75,7 +76,7 @@ local function calendarCell(text, cell, options)
             dimen = Geom:new{ w = cell.w, h = cell.h },
             TextWidget:new{
                 text = text,
-                face = Font:getFace("infofont", 17),
+                face = Font:getFace("infofont", 15),
                 bold = options.bold,
                 fgcolor = options.inverted and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
             },
@@ -271,6 +272,112 @@ function Dashboard:buildDrain(width)
     }
 end
 
+-- One AI usage tile: provider and update time, headline, a bar when a percentage is known,
+-- and one line with the detail and reset time.
+local function usageTileContent(tile, inner_width)
+    local updated = TextWidget:new{
+        text = tile.updated ~= "" and tile.updated or " ",
+        face = Font:getFace("infofont", 12),
+        bold = tile.stale,
+    }
+    updated.overlap_align = "right"
+    local title = TextWidget:new{
+        text = tile.title,
+        face = Font:getFace("infofont", 15),
+        bold = true,
+        max_width = inner_width - updated:getSize().w - Screen:scaleBySize(4),
+    }
+    local content = VerticalGroup:new{
+        align = "left",
+        OverlapGroup:new{
+            dimen = Geom:new{ w = inner_width, h = title:getSize().h },
+            allow_mirroring = false,
+            title,
+            updated,
+        },
+    }
+    table.insert(content, TextWidget:new{
+        text = tile.headline,
+        face = Font:getFace("infofont", tile.missing and 16 or 20),
+        bold = not tile.missing,
+        max_width = inner_width,
+    })
+    if tile.pct then
+        local bar_height = Screen:scaleBySize(6)
+        local bar_width = inner_width - 2
+        local filled = math.floor(bar_width * tile.pct / 100 + 0.5)
+        local bar = HorizontalGroup:new{}
+        if filled > 0 then
+            table.insert(bar, LineWidget:new{
+                background = tile.stale and Blitbuffer.COLOR_DARK_GRAY or Blitbuffer.COLOR_BLACK,
+                dimen = Geom:new{ w = filled, h = bar_height },
+            })
+        end
+        table.insert(bar, HorizontalSpan:new{ width = bar_width - filled })
+        table.insert(content, VerticalSpan:new{ width = Screen:scaleBySize(3) })
+        table.insert(content, FrameContainer:new{
+            bordersize = 1,
+            padding = 0,
+            margin = 0,
+            bar,
+        })
+        table.insert(content, VerticalSpan:new{ width = Screen:scaleBySize(3) })
+    end
+    if tile.line then
+        table.insert(content, TextWidget:new{
+            text = tile.line,
+            face = Font:getFace("infofont", 13),
+            max_width = inner_width,
+        })
+    end
+    return content
+end
+
+-- A row of equal tiles for Grok, Claude, DeepSeek and Gemini, from the state blob's `usage` field.
+function Dashboard:buildUsage(width)
+    local now = os.time()
+    local tiles = Usage.describeAll(self.store.state.usage, now)
+    self.shown_usage_signature = Usage.signature(self.store.state.usage, now)
+    self.usage_tiles = tiles
+
+    local gap = Screen:scaleBySize(8)
+    local padding = Screen:scaleBySize(6)
+    local tile_width = math.floor((width - gap * (#tiles - 1)) / #tiles)
+    local inner_width = tile_width - padding * 2 - 2 -- 1 pixel border on each side
+
+    local contents, tallest = {}, 0
+    for index, tile in ipairs(tiles) do
+        contents[index] = usageTileContent(tile, inner_width)
+        tallest = math.max(tallest, contents[index]:getSize().h)
+    end
+
+    local row = HorizontalGroup:new{ align = "top" }
+    for index, content in ipairs(contents) do
+        -- Pads every tile to the tallest, so the borders line up. The padding goes in a new
+        -- group: a VerticalGroup caches its layout in getSize, so adding to one later breaks paintTo.
+        local filler = tallest - content:getSize().h
+        if filler > 0 then
+            content = VerticalGroup:new{
+                align = "left",
+                content,
+                VerticalSpan:new{ width = filler },
+            }
+        end
+        if index > 1 then
+            table.insert(row, HorizontalSpan:new{ width = gap })
+        end
+        table.insert(row, FrameContainer:new{
+            bordersize = 1,
+            radius = Screen:scaleBySize(4),
+            padding = padding,
+            margin = 0,
+            background = Blitbuffer.COLOR_WHITE,
+            content,
+        })
+    end
+    return row
+end
+
 function Dashboard:buildPager(page_count)
     if page_count <= 1 then
         return nil
@@ -372,7 +479,7 @@ function Dashboard:build()
     local now = DashTime.fields()
     self.shown_day = now.day
 
-    local cell_width = math.floor(math.min(width, height) * 0.062)
+    local cell_width = math.floor(math.min(width, height) * 0.052)
     local cell = { w = cell_width, h = math.floor(cell_width * 0.78) }
     local calendar = buildCalendar(now, cell)
     local left_width = content_width - calendar:getSize().w - margin
@@ -442,7 +549,8 @@ function Dashboard:build()
     self.status_widget.overlap_offset = { margin, height - exit_size.h - margin }
 
     local gap = Screen:scaleBySize(12)
-    local top_height = margin + header:getSize().h + gap * 2 + 2
+    local usage = self:buildUsage(content_width)
+    local top_height = margin + header:getSize().h + gap * 2 + 2 + usage:getSize().h + gap
     local inbox_height = height - top_height - exit_size.h - margin - gap
 
     local main = VerticalGroup:new{
@@ -451,6 +559,8 @@ function Dashboard:build()
         header,
         VerticalSpan:new{ width = gap },
         LineWidget:new{ dimen = Geom:new{ w = content_width, h = 2 } },
+        VerticalSpan:new{ width = gap },
+        usage,
         VerticalSpan:new{ width = gap },
         self:buildInbox(content_width, inbox_height),
     }
@@ -551,6 +661,7 @@ function Dashboard:refresh()
     end
     local needs_rebuild = DashTime.fields().day ~= self.shown_day
         or self:weatherExpired() ~= self.shown_weather_expired
+        or Usage.signature(self.store.state.usage, os.time()) ~= self.shown_usage_signature
     if needs_rebuild then
         self[1]:free()
         self:build()

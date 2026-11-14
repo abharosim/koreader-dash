@@ -472,6 +472,66 @@ test("a partial state update reaches the store", function()
     assert(dashboard_widget.store.state.todo.count == 3, "state not updated")
 end)
 
+local function findText(widget, text)
+    if type(widget) ~= "table" then return nil end
+    if widget.text == text then return widget end
+    for _, child in ipairs(widget) do
+        local found = findText(child, text)
+        if found then return found end
+    end
+    return nil
+end
+
+test("usage tiles show every provider, with no data yet", function()
+    local dashboard = dashboard()
+    for _, title in ipairs({ "Grok", "Claude", "DeepSeek", "Gemini" }) do
+        assert(findText(dashboard[1], title), "no tile for " .. title)
+    end
+    assert(findText(dashboard[1], "No data yet"), "no empty state")
+end)
+
+test("usage sent over HTTP shows on its tile", function()
+    local dashboard = dashboard()
+    dashboard.store:mergeState({ usage = { grok = { used_pct = 17.4, label = "Grok Bot", updated_at = os.time() } } })
+    runScheduled()
+    assert(findText(dashboard[1], "Grok Bot"), "label not shown")
+    assert(findText(dashboard[1], "17%"), "percent not shown")
+end)
+
+test("a usage tile going stale rebuilds the screen", function()
+    local dashboard = dashboard()
+    dashboard.store:mergeState({ usage = { grok = { used_pct = 17.4, updated_at = os.time(), expires_at = os.time() + 3600 } } })
+    runScheduled()
+    dashboard.store.state.usage.grok.expires_at = os.time() - 1
+    refreshes = {}
+    dashboard:refresh()
+    assert(refreshes[#refreshes].type == "full", "no full refresh: " .. tostring(refreshes[#refreshes].type))
+    assert(dashboard.usage_tiles[1].stale, "tile not stale after rebuild")
+end)
+
+-- A real VerticalGroup caches its children's positions in getSize, and painting one that
+-- gained a child afterwards crashed KOReader.
+test("regression: no group gains children after it's measured", function()
+    local VerticalGroup = stubs["ui/widget/verticalgroup"]
+    local real_get_size = VerticalGroup.getSize
+    local measured = {}
+    VerticalGroup.getSize = function(self)
+        measured[self] = #self
+        return { w = 200, h = 20 * #self }
+    end
+    local dashboard = dashboard()
+    -- A taller tile than the rest, so the others get padded.
+    dashboard.store:mergeState({ usage = {
+        grok = { used_pct = 50, detail = "week", resets_at = os.time() + 3600, updated_at = os.time() },
+    } })
+    local ok, err = pcall(dashboard.rebuild, dashboard, "partial")
+    VerticalGroup.getSize = real_get_size
+    assert(ok, err)
+    for group, count in pairs(measured) do
+        assert(#group == count, string.format("measured with %d children, now has %d", count, #group))
+    end
+end)
+
 test("the screen shows the ping count", function()
     local status = dashboard().get_status()
     assert(status:find("Pings: 1", 1, true), status)
@@ -606,8 +666,25 @@ test("a restart request closes Dash and restarts KOReader once", function()
     assert(broadcasts[1] == "Restart" and #broadcasts == 1, "no Restart event")
     assert(not exists(restart_request), "request not removed")
     assert(closed[#closed] == open, "Dash not closed before restarting")
+    assert(exists(settings_dir .. "/dash_open_request"), "no request to reopen Dash after the restart")
     runScheduled()
     assert(#broadcasts == 1, "restarted twice")
+end)
+
+test("an open request at startup opens Dash once, as after a deploy", function()
+    local request = settings_dir .. "/dash_open_request"
+    io.open(request, "w"):close()
+    -- A fresh start: KOReader loads the plugin again after restarting.
+    local Restarted = dofile("plugin/dash.koplugin/main.lua")
+    local before = #shown
+    Restarted:new{ ui = { menu = { registerToMainMenu = function() end } } }
+    assert(not exists(request), "request not removed")
+    runScheduled()
+    assert(#shown == before + 1 and shown[#shown].get_status, "Dash not opened")
+    Restarted:new{ ui = { menu = { registerToMainMenu = function() end } } }
+    runScheduled()
+    assert(#shown == before + 1, "opened again by a second plugin instance")
+    shown[#shown].on_close()
 end)
 
 os.execute = real_execute

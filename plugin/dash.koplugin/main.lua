@@ -29,6 +29,10 @@ local SAVE_DELAY_SECONDS = 5
 -- scripts/deploy.sh creates this file to ask KOReader to restart and load the new code.
 local RESTART_REQUEST_FILE = "dash_restart_request"
 local RESTART_CHECK_SECONDS = 2
+-- If this file exists when KOReader starts, Dash opens. A restart made while Dash is open
+-- creates it, and so does scripts/deploy.sh, so a deploy comes back to the dashboard.
+local OPEN_REQUEST_FILE = "dash_open_request"
+local OPEN_REQUEST_DELAY_SECONDS = 2
 -- Below this, sleeping wins over opening Dash unless the Kindle is charging.
 local LOW_BATTERY_PERCENT = 20
 local REPLACES_SLEEP_SETTING = "dash_replaces_sleep"
@@ -49,6 +53,7 @@ local Runtime = {
     polling = false,
     pings = 0,
     watching_restart = false,
+    checked_open_request = false,
     last_ping = nil,
 }
 
@@ -56,6 +61,10 @@ Power.recoverFromCrash()
 
 local function restartRequestPath()
     return DataStorage:getSettingsDir() .. "/" .. RESTART_REQUEST_FILE
+end
+
+local function openRequestPath()
+    return DataStorage:getSettingsDir() .. "/" .. OPEN_REQUEST_FILE
 end
 -- A request made while older code was running has been answered by this start.
 os.remove(restartRequestPath())
@@ -320,6 +329,13 @@ local function checkRestartRequest()
         return
     end
     logEvent("restart requested")
+    if Runtime.dashboard then
+        -- Come back to the dashboard after the restart.
+        local request = io.open(openRequestPath(), "w")
+        if request then
+            request:close()
+        end
+    end
     closeDashboard()
     -- The same event as Restart in KOReader's menu: the reader saves its place first.
     UIManager:broadcastEvent(Event:new("Restart"))
@@ -410,6 +426,13 @@ function Dash:init()
     if not Runtime.watching_restart then
         Runtime.watching_restart = true
         UIManager:scheduleIn(RESTART_CHECK_SECONDS, checkRestartRequest)
+    end
+    if not Runtime.checked_open_request then
+        Runtime.checked_open_request = true
+        -- Removing the file is the check, so it opens Dash once.
+        if os.remove(openRequestPath()) then
+            UIManager:scheduleIn(OPEN_REQUEST_DELAY_SECONDS, openDashboard)
+        end
     end
     self:onDispatcherRegisterActions()
     if self.ui and self.ui.menu then
