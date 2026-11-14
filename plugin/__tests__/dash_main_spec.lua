@@ -94,6 +94,7 @@ local HomeRegistry = { register = function(mod) home_modules[mod.id] = mod end }
 
 local stubs = {
     ["modules/moduleregistry"] = HomeRegistry,
+    ["ui/widget/confirmbox"] = class(),
     ["ui/event"] = { new = function(_, name) return { name = name } end },
     datastorage = { getSettingsDir = function() return settings_dir end },
     device = Device,
@@ -246,8 +247,8 @@ local function findButton(widget)
     return nil
 end
 
-local function holdExit()
-    dashboard().exit_button.hold_callback()
+local function holdLock()
+    dashboard().lock_button.hold_callback()
     runScheduled()
 end
 
@@ -292,32 +293,45 @@ test("the drain tile follows charging and records readings each minute", functio
     dashboard:refresh()
 end)
 
-test("holding Exit locks the dashboard: taps are ignored and Exit won't close it", function()
+test("Lock sits left of Exit, the same size, on the bottom row", function()
     local dashboard = dashboard()
-    local closed_count = #closed
-    holdExit()
-    assert(dashboard.locked, "not locked")
-    local button = dashboard.exit_button
-    assert(button.text == "Locked", "button label: " .. tostring(button.text))
-    assert(lastShown().text:find("Hold", 1, true), "no hint shown after locking")
-
-    button.received = 0
-    local status = dashboard.status_widget
-    status.received = 0
-    assert(dashboard:handleEvent({ handler = "onGesture" }) == true, "gesture not swallowed")
-    assert(button.received == 1, "the lock button must still get gestures")
-    assert(status.received == 0, "a gesture reached the rest of the dashboard")
-
-    button.callback()
-    assert(#closed == closed_count, "Exit closed a locked dashboard")
-    assert(lastShown().text:find("Hold", 1, true), "tapping a locked Exit gives no hint")
+    local lock, exit = dashboard.lock_button, dashboard.exit_button
+    assert(lock.text == "Lock", "label: " .. tostring(lock.text))
+    assert(lock.width == exit.width, "different widths")
+    assert(lock.overlap_offset[2] == exit.overlap_offset[2], "not on the same row")
+    assert(lock.overlap_offset[1] + 200 <= exit.overlap_offset[1], "Lock overlaps or sits right of Exit")
+    assert(exit.width < 1072 * 0.2, "Exit is still large: " .. exit.width)
 end)
 
-test("holding again unlocks, and Exit works again", function()
+test("tapping Lock only explains; it doesn't lock", function()
     local dashboard = dashboard()
-    holdExit()
+    dashboard.lock_button.callback()
+    assert(not dashboard.locked, "a tap locked it")
+    assert(lastShown().text:find("Hold", 1, true), "no hint")
+end)
+
+test("holding Lock locks: only the Lock button gets touches", function()
+    local dashboard = dashboard()
+    holdLock()
+    assert(dashboard.locked, "not locked")
+    local lock = dashboard.lock_button
+    assert(lock.text == "Locked", "button label: " .. tostring(lock.text))
+    assert(lastShown().text:find("Hold", 1, true), "no hint shown after locking")
+
+    lock.received = 0
+    dashboard.exit_button.received = 0
+    dashboard.status_widget.received = 0
+    assert(dashboard:handleEvent({ handler = "onGesture" }) == true, "gesture not swallowed")
+    assert(lock.received == 1, "the Lock button must still get gestures")
+    assert(dashboard.exit_button.received == 0, "a gesture reached Exit")
+    assert(dashboard.status_widget.received == 0, "a gesture reached the rest of the dashboard")
+end)
+
+test("holding Locked unlocks, and touches reach everything again", function()
+    local dashboard = dashboard()
+    holdLock()
     assert(not dashboard.locked, "still locked")
-    assert(dashboard.exit_button.text == "Exit", "button label: " .. tostring(dashboard.exit_button.text))
+    assert(dashboard.lock_button.text == "Lock", "button label: " .. tostring(dashboard.lock_button.text))
     dashboard.status_widget.received = 0
     dashboard:handleEvent({ handler = "onGesture" })
     assert(dashboard.status_widget.received == 1, "gestures still blocked after unlocking")
@@ -432,6 +446,24 @@ test("marking a message read on the dashboard clears it from unread", function()
     local dashboard = dashboard_widget
     dashboard:markRead(dashboard.store:unreadMessages()[1])
     assert(dashboard.store:unreadCount() == 0, "still unread")
+end)
+
+test("Read all asks first, then marks every message read", function()
+    local dashboard = dashboard_widget
+    httpRequest("POST", "/v1/inbox", readToken(), '{"title":"one"}')
+    httpRequest("POST", "/v1/inbox", readToken(), '{"title":"two"}')
+    runScheduled()
+    local unread = dashboard.store:unreadCount()
+    assert(unread >= 2, "setup: " .. unread)
+    assert(dashboard.read_all_button, "no Read all button with unread messages")
+    dashboard.read_all_button.callback()
+    local confirm = lastShown()
+    assert(confirm.ok_callback and confirm.text:find(tostring(unread), 1, true), "no confirmation")
+    assert(dashboard.store:unreadCount() == unread, "marked before confirming")
+    confirm.ok_callback()
+    runScheduled()
+    assert(dashboard.store:unreadCount() == 0, "still unread")
+    assert(dashboard.read_all_button == nil, "Read all still shown with nothing unread")
 end)
 
 test("a partial state update reaches the store", function()

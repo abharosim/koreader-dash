@@ -127,6 +127,23 @@ test("mark read and unread both work", function()
     eq(store:setRead("missing", true), nil, "unknown id")
 end)
 
+test("mark all read clears the unread list in one change", function()
+    local changes = 0
+    local store = newStore()
+    store:addMessage{ id = "a", title = "1" }
+    store:addMessage{ id = "b", title = "2", priority = "high" }
+    store:addMessage{ id = "c", title = "3" }
+    store:setRead("a", true)
+    local first_read_at = store:getMessage("a").read_at
+    store.on_change = function() changes = changes + 1 end
+    eq(store:markAllRead(), 2, "changed")
+    eq(store:unreadCount(), 0, "unread")
+    eq(changes, 1, "change notifications")
+    eq(store:getMessage("a").read_at, first_read_at, "already-read message touched")
+    eq(store:markAllRead(), 0, "second call")
+    eq(changes, 1, "a no-op still notified")
+end)
+
 test("a full inbox drops the oldest read message", function()
     local store = newStore()
     for i = 1, 100 do store:addMessage{ id = "m" .. i, title = "x" } end

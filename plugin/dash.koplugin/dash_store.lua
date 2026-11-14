@@ -256,6 +256,21 @@ function Store:setRead(id, read)
     return message
 end
 
+-- Marks every unread message read. Returns how many changed.
+function Store:markAllRead()
+    local now, count = self.now(), 0
+    for _, message in ipairs(self.messages) do
+        if not message.read_at then
+            message.read_at = now
+            count = count + 1
+        end
+    end
+    if count > 0 then
+        self:_changed()
+    end
+    return count
+end
+
 function Store:deleteMessage(id)
     local message, index = self:getMessage(id)
     if message then

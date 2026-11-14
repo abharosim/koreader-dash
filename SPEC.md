@@ -59,7 +59,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 │ Hello from my Mac            [ Read ]│
 │ mac  ·  14:40                        │
 │                                      │
-│ 192.168.1.152:8787          [ Exit ] │
+│ 192.168.1.152:8787       [Lock][Exit]│
 └──────────────────────────────────────┘
 ```
 
@@ -71,8 +71,9 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 - **Read button:** marks that message read, so it leaves the list.
 - **Tapping a message:** opens the reader, described below.
 - **Paging:** `<` and `>` appear when the messages don't fit on one page.
-- **Exit:** the button in the bottom right corner closes the dashboard and returns to KOReader.
-- **Lock:** holding Exit locks the dashboard. The button then reads **Locked**, and every tap on the screen is ignored: Exit, Read, opening messages and the page buttons. Tapping Locked shows a short "Hold the button to unlock" hint, and holding it again unlocks. Only touch is blocked: the HTTP API, the clock and sleep work as usual. The lock isn't saved, so restarting KOReader clears it. Locking and unlocking are written to `dash_m0.log`.
+- **Exit:** the button in the bottom right corner (15% of the screen width) closes the dashboard and returns to KOReader.
+- **Lock:** a **Lock** button sits left of Exit, the same size. Holding it locks the dashboard: it then reads **Locked**, and every other touch is ignored (Exit, Read, Read all, opening messages, the page buttons). Tapping it only shows a hint; holding it again unlocks. Only touch is blocked: the HTTP API, the clock and sleep work as usual. The lock isn't saved, so restarting KOReader clears it. Locking and unlocking are written to `dash_m0.log`.
+- **Read all:** shown in the inbox header, beside the page buttons, while anything is unread. It asks to confirm, then marks every message read in one save.
 - **Instead of sleeping:** when KOReader would go to sleep, it opens Dash instead. This covers the idle timer, the Sleep menu item and the Sleep gesture, which all go through `UIManager:suspend`. Exit returns to whatever was open before. Exceptions, which sleep as usual:
   - the power button (and a cover), because the Kindle's own power manager handles those before KOReader hears about them;
   - sleep requested while Dash is already open;

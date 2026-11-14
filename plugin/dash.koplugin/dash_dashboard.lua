@@ -3,6 +3,7 @@
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -198,7 +199,7 @@ local Dashboard = InputContainer:extend{
     get_drain = nil,  -- function returning the battery tile's headline and detail
     on_minute = nil,  -- function called on each minute boundary
     on_close = nil,   -- function called when the user taps Exit
-    locked = false,   -- while locked, taps do nothing; holding Exit toggles the lock
+    locked = false,   -- while locked, only the Lock button responds; holding it toggles the lock
     on_lock_change = nil, -- function called with the new lock state
 }
 
@@ -309,17 +310,31 @@ function Dashboard:buildInbox(width, available_height)
     self.page = math.max(1, math.min(self.page, page_count))
 
     local title = #unread > 0 and string.format(_("Inbox (%d unread)"), #unread) or _("Inbox")
+    local controls = HorizontalGroup:new{ align = "center" }
+    if #unread > 0 then
+        self.read_all_button = Button:new{
+            text = _("Read all"),
+            text_font_size = 18,
+            show_parent = self,
+            callback = function() self:confirmReadAll() end,
+        }
+        table.insert(controls, self.read_all_button)
+    else
+        self.read_all_button = nil
+    end
     local pager = self:buildPager(page_count)
     if pager then
-        pager.overlap_align = "right"
+        table.insert(controls, HorizontalSpan:new{ width = Screen:scaleBySize(12) })
+        table.insert(controls, pager)
     end
+    controls.overlap_align = "right"
     local inbox = VerticalGroup:new{
         align = "left",
         OverlapGroup:new{
             dimen = Geom:new{ w = width, h = title_height },
             allow_mirroring = false,
             TextWidget:new{ text = title, face = Font:getFace("infofont", 22), bold = true },
-            pager,
+            controls,
         },
     }
 
@@ -392,29 +407,36 @@ function Dashboard:build()
         calendar,
     }
 
-    local exit_button = Button:new{
-        text = self.locked and _("Locked") or _("Exit"),
-        text_font_size = 26,
-        width = math.floor(width * 0.24),
-        padding_v = Screen:scaleBySize(10),
-        show_parent = self,
-        callback = function()
-            if self.locked then
-                self:showLockHint(_("Locked. Hold the button to unlock."))
-            elseif self.on_close then
-                self.on_close()
-            end
-        end,
-        hold_callback = function() self:setLocked(not self.locked) end,
-    }
-    self.exit_button = exit_button
+    local function barButton(text, callback, hold_callback)
+        return Button:new{
+            text = text,
+            text_font_size = 20,
+            width = math.floor(width * 0.15),
+            padding_v = Screen:scaleBySize(6),
+            show_parent = self,
+            callback = callback,
+            hold_callback = hold_callback,
+        }
+    end
+    local exit_button = barButton(_("Exit"), function()
+        if self.on_close then
+            self.on_close()
+        end
+    end)
+    local lock_button = barButton(self.locked and _("Locked") or _("Lock"), function()
+        self:showLockHint(self.locked and _("Locked. Hold to unlock.") or _("Hold to lock."))
+    end, function() self:setLocked(not self.locked) end)
+    self.exit_button, self.lock_button = exit_button, lock_button
     local exit_size = exit_button:getSize()
-    exit_button.overlap_offset = { width - exit_size.w - margin, height - exit_size.h - margin }
+    local button_gap = Screen:scaleBySize(8)
+    local bar_y = height - exit_size.h - margin
+    exit_button.overlap_offset = { width - exit_size.w - margin, bar_y }
+    lock_button.overlap_offset = { width - exit_size.w * 2 - margin - button_gap, bar_y }
 
     self.status_widget = TextBoxWidget:new{
         text = self.get_status(),
         face = Font:getFace("infofont", 16),
-        width = width - exit_size.w - margin * 3,
+        width = width - exit_size.w * 2 - button_gap - margin * 3,
         height = exit_size.h,
     }
     self.status_widget.overlap_offset = { margin, height - exit_size.h - margin }
@@ -445,6 +467,7 @@ function Dashboard:build()
             allow_mirroring = false,
             main,
             self.status_widget,
+            lock_button,
             exit_button,
         },
     }
@@ -474,19 +497,32 @@ function Dashboard:setLocked(locked)
     if self.on_lock_change then
         self.on_lock_change(locked)
     end
-    self:showLockHint(locked and _("Locked. Hold the button to unlock.") or _("Unlocked"))
+    self:showLockHint(locked and _("Locked. Hold Locked to unlock.") or _("Unlocked"))
     self:scheduleRebuild(0.05)
 end
 
--- While locked, the Exit button is the only thing that responds to touch.
+-- While locked, the Lock button is the only thing that responds to touch.
 function Dashboard:handleEvent(event)
     if self.locked and event.handler == "onGesture" then
-        if self.exit_button then
-            self.exit_button:handleEvent(event)
+        if self.lock_button then
+            self.lock_button:handleEvent(event)
         end
         return true
     end
     return InputContainer.handleEvent(self, event)
+end
+
+function Dashboard:confirmReadAll()
+    local count = self.store:unreadCount()
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Mark all %d messages as read?"), count),
+        ok_text = _("Read all"),
+        ok_callback = function()
+            self.store:markAllRead()
+            self.page = 1
+            self:scheduleRebuild(0.05)
+        end,
+    })
 end
 
 function Dashboard:markRead(message)
