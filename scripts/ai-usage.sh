@@ -23,6 +23,7 @@
 #   --<provider>-clear        remove that tile's data (shows "No data yet")
 # <provider> is grok, anthropic, deepseek or gemini. Flags override fetched values.
 # --dry-run prints the JSON instead of sending it.
+# --allow-empty exits 0 when there's nothing to send (for the scheduled job, which runs with no flags).
 #
 # Examples:
 #   scripts/ai-usage.sh                                   # fetch everything configured
@@ -36,6 +37,7 @@ cd "$(dirname "$0")/.."
 now=$(date +%s)
 patch='{}'
 dry_run=0
+allow_empty=0
 
 # Adds one field: set_field provider field json_value
 set_field() {
@@ -117,6 +119,7 @@ fetch_anthropic
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry_run=1; shift; continue ;;
+        --allow-empty) allow_empty=1; shift; continue ;;
         --grok-*|--anthropic-*|--deepseek-*|--gemini-*) ;;
         *) warn "unknown option: $1"; exit 2 ;;
     esac
@@ -150,6 +153,10 @@ while [ $# -gt 0 ]; do
         'if .[$p] != null then .[$p].updated_at = $t else . end')
 done
 
+if [ "$patch" = '{}' ] && [ "$allow_empty" = 1 ]; then
+    echo "ai-usage: $(date '+%Y-%m-%d %H:%M:%S') nothing to send (no API keys set); tiles left as they are"
+    exit 0
+fi
 if [ "$patch" = '{}' ]; then
     warn "nothing to send: set DEEPSEEK_API_KEY, CLAUDE_OAUTH_TOKEN or XAI_MANAGEMENT_KEY, or pass values (see the top of this file)"
     exit 1
@@ -160,6 +167,7 @@ if [ "$dry_run" = 1 ]; then
     exit 0
 fi
 [ -n "${KDASH_URL:-}" ] && [ -n "${KDASH_TOKEN:-}" ] || { warn "KDASH_URL and KDASH_TOKEN must be set (in .env)"; exit 1; }
+printf 'ai-usage: %s sending %s: ' "$(date '+%Y-%m-%d %H:%M:%S')" "$(printf '%s' "$patch" | jq -r 'keys | join(", ")')"
 curl -sS --max-time 10 -X PUT "$KDASH_URL/v1/state" \
     -H "Authorization: Bearer $KDASH_TOKEN" -H "Content-Type: application/json" \
     --data-binary "$body"

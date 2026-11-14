@@ -460,7 +460,7 @@ Both bodies end with the working directory, and `data` holds the first 8 charact
 
 ### AI usage
 
-`scripts/ai-usage.sh` fetches what has an API, takes the rest from flags, and sends one `PUT /v1/state` with only the providers it has new values for. Keys come from the environment or `.env` (git-ignored) and are never printed. Run it by hand, or from `launchd`/cron every 15 minutes.
+`scripts/ai-usage.sh` fetches what has an API, takes the rest from flags, and sends one `PUT /v1/state` with only the providers it has new values for. Keys come from the environment or `.env` (git-ignored) and are never printed. Run it by hand, or install the launchd job with `scripts/install-launchd.sh`: it runs the script at login and every 30 minutes (`com.abharosim.koreader-dash.ai-usage`, template in `scripts/launchd/`, log in `~/Library/Logs/koreader-dash-ai-usage.log`), and `--uninstall` removes it. The job passes `--allow-empty`, so with no keys set it logs that there was nothing to send and leaves the tiles alone.
 
 | Tile | Source | Setup |
 |---|---|---|

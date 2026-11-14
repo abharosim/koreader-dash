@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: scripts/install-launchd.sh replaces __REPO__ and __HOME__ and installs it to
+     ~/Library/LaunchAgents. Runs scripts/ai-usage.sh at login and every 30 minutes. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.abharosim.koreader-dash.ai-usage</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>__REPO__/scripts/ai-usage.sh</string>
+        <string>--allow-empty</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/koreader-dash-ai-usage.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/koreader-dash-ai-usage.log</string>
+</dict>
+</plist>
