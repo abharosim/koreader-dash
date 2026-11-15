@@ -1,11 +1,12 @@
 #!/bin/sh
-# Sends AI usage to the dashboard's usage tiles (Grok, Claude, DeepSeek, Gemini).
+# Sends AI usage to the dashboard's usage tiles (Grok Bot, Claude, DeepSeek, xAI API).
 # Fetches what has an API, takes the rest from flags, and sends one PUT /v1/state.
 # Only providers with new data are sent, so the others keep their last values.
 #
 # Fetched automatically when the variable is set (in the environment or .env):
 #   DEEPSEEK_API_KEY       DeepSeek balance (GET api.deepseek.com/user/balance)
-#   XAI_MANAGEMENT_KEY     xAI API prepaid credit balance, with XAI_TEAM_ID
+#   XAI_MANAGEMENT_KEY     xAI API spend this month and prepaid balance (Billing read-only key;
+#                          XAI_TEAM_ID optional, read from the key otherwise)
 #                          (GET management-api.x.ai/v1/billing/teams/{team}/prepaid/balance)
 #   CLAUDE_OAUTH_TOKEN     (or CLAUDE_CODE_OAUTH_TOKEN) Claude plan usage (5-hour and weekly) from the endpoint Claude Code's
 #                          /usage uses. Undocumented, so it may break. Or set
@@ -21,14 +22,14 @@
 #   --<provider>-headline TEXT  the big line, instead of one made from the numbers
 #   (an empty TEXT removes that field)
 #   --<provider>-clear        remove that tile's data (shows "No data yet")
-# <provider> is grok, anthropic, deepseek or gemini. Flags override fetched values.
+# <provider> is grok, anthropic, deepseek or xai. Flags override fetched values.
 # --dry-run prints the JSON instead of sending it.
 # --allow-empty exits 0 when there's nothing to send (for the scheduled job, which runs with no flags).
 #
 # Examples:
 #   scripts/ai-usage.sh                                   # fetch everything configured
 #   scripts/ai-usage.sh --grok-pct 17.4 --grok-resets 2026-11-20T23:24:00Z
-#   scripts/ai-usage.sh --gemini-spent 3.20 --gemini-detail "Nov, API"
+#   scripts/ai-usage.sh --xai-spent 3.20 --xai-detail "Nov"
 # Run it from cron or launchd (scripts/install-launchd.sh runs it every 30 minutes) to keep the tiles current.
 set -u
 cd "$(dirname "$0")/.."
@@ -73,18 +74,30 @@ fetch_deepseek() {
         '.deepseek = ($i + {updated_at: $t})')
 }
 
-fetch_grok_api() {
-    [ -n "${XAI_MANAGEMENT_KEY:-}" ] && [ -n "${XAI_TEAM_ID:-}" ] || return 0
-    response=$(curl -sf --max-time 10 \
-        "https://management-api.x.ai/v1/billing/teams/$XAI_TEAM_ID/prepaid/balance" \
-        -H "Authorization: Bearer $XAI_MANAGEMENT_KEY") \
-        || { warn "xAI request failed"; return 0; }
+fetch_xai() {
+    # xAI API (not Grok Bot): needs a management key with Billing read-only.
+    [ -n "${XAI_MANAGEMENT_KEY:-}" ] || return 0
+    auth="Authorization: Bearer $XAI_MANAGEMENT_KEY"
+    team="${XAI_TEAM_ID:-}"
+    [ -n "$team" ] || team=$(curl -sf --max-time 10 https://management-api.x.ai/auth/management-keys/validation \
+        -H "$auth" | jq -r '.scopeId // .teamId // empty' 2>/dev/null)
+    [ -n "$team" ] || { warn "xAI: couldn't find the team id (set XAI_TEAM_ID)"; return 0; }
+    base="https://management-api.x.ai/v1/billing/teams/$team"
     # total.val is USD cents; purchases are negative, so the balance is its negation.
-    cents=$(printf '%s' "$response" | jq -r '.total.val // empty' 2>/dev/null)
-    [ -n "$cents" ] || { warn "xAI response had no balance"; return 0; }
-    patch=$(printf '%s' "$patch" | jq -c --arg c "$cents" --argjson t "$now" \
-        '.grok = { balance: (($c | tonumber) / -100), currency: "USD",
-                   detail: "API credits", updated_at: $t }')
+    cents=$(curl -sf --max-time 10 "$base/prepaid/balance" -H "$auth" | jq -r '.total.val // empty' 2>/dev/null)
+    # Spend so far this calendar month, in dollars.
+    start=$(date '+%Y-%m-01 00:00:00')
+    end=$(date -v+1m '+%Y-%m-01 00:00:00' 2>/dev/null || date -d "$(date +%Y-%m-01) +1 month" '+%Y-%m-01 00:00:00')
+    body=$(jq -nc --arg s "$start" --arg e "$end" --arg z "${TZ:-America/New_York}" \
+        '{analyticsRequest: {timeRange: {startTime: $s, endTime: $e, timezone: $z}, timeUnit: "TIME_UNIT_NONE",
+          values: [{name: "usd", aggregation: "AGGREGATION_SUM"}], groupBy: [], filters: []}}')
+    spent=$(curl -sf --max-time 15 -X POST "$base/usage" -H "$auth" -H "Content-Type: application/json" -d "$body" \
+        | jq -r '[.timeSeries[]?.dataPoints[]?.values[0] // 0] | add // 0' 2>/dev/null)
+    [ -n "$cents$spent" ] || { warn "xAI requests failed"; return 0; }
+    detail=$(date +%b)
+    [ -n "$cents" ] && detail="$detail · bal \$$(awk -v c="$cents" 'BEGIN { printf "%.2f", -c / 100 + 0 }')"
+    patch=$(printf '%s' "$patch" | jq -c --arg s "${spent:-0}" --arg d "$detail" --argjson t "$now" \
+        '.xai = { spent: ($s | tonumber), currency: "USD", detail: $d, updated_at: $t }')
 }
 
 fetch_anthropic() {
@@ -120,14 +133,14 @@ fetch_anthropic() {
 }
 
 fetch_deepseek
-fetch_grok_api
+fetch_xai
 fetch_anthropic
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry_run=1; shift; continue ;;
         --allow-empty) allow_empty=1; shift; continue ;;
-        --grok-*|--anthropic-*|--deepseek-*|--gemini-*) ;;
+        --grok-*|--anthropic-*|--deepseek-*|--xai-*|--gemini-*) ;;
         *) warn "unknown option: $1"; exit 2 ;;
     esac
     option=${1#--}

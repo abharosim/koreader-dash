@@ -11,7 +11,7 @@ Usage.PROVIDERS = {
     { key = "grok", title = "Grok" },
     { key = "anthropic", title = "Claude" },
     { key = "deepseek", title = "DeepSeek" },
-    { key = "gemini", title = "Gemini" },
+    { key = "xai", title = "xAI API" },
 }
 
 -- Values older than this are marked stale, unless the sender sets its own expires_at.

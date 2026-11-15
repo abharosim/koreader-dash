@@ -333,7 +333,7 @@ local function usageTileContent(tile, inner_width)
     return content
 end
 
--- A row of equal tiles for Grok, Claude, DeepSeek and Gemini, from the state blob's `usage` field.
+-- A row of equal tiles for Grok, Claude, DeepSeek and xAI API, from the state blob's `usage` field.
 function Dashboard:buildUsage(width)
     local now = os.time()
     local tiles = Usage.describeAll(self.store.state.usage, now)

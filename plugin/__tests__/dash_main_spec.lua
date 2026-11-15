@@ -484,7 +484,7 @@ end
 
 test("usage tiles show every provider, with no data yet", function()
     local dashboard = dashboard()
-    for _, title in ipairs({ "Grok", "Claude", "DeepSeek", "Gemini" }) do
+    for _, title in ipairs({ "Grok", "Claude", "DeepSeek", "xAI API" }) do
         assert(findText(dashboard[1], title), "no tile for " .. title)
     end
     assert(findText(dashboard[1], "No data yet"), "no empty state")

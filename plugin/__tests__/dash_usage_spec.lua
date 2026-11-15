@@ -26,7 +26,7 @@ local GROK = Usage.PROVIDERS[1]
 local tiles = Usage.describeAll(nil, now)
 check("four tiles with no usage data", #tiles, 4)
 check("tiles are in a fixed order", tiles[1].title .. "," .. tiles[2].title .. "," .. tiles[3].title .. "," .. tiles[4].title,
-    "Grok,Claude,DeepSeek,Gemini")
+    "Grok,Claude,DeepSeek,xAI API")
 check("a provider with no data says so", tiles[2].headline, "No data yet")
 check("no data is marked missing", tiles[2].missing, true)
 check("no data has no bar", tiles[2].pct, nil)
