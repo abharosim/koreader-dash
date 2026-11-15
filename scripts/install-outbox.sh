@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs the launchd job that sends ~/kdash-outbox/*.md to the Kindle inbox every 10 minutes.
+# Installs the launchd job that sends ~/kdash-outbox/*.md to the Kindle inbox every minute.
 # Log: ~/Library/Logs/koreader-dash-outbox.log
 #   scripts/install-outbox.sh             install (or reinstall) and run once now
 #   scripts/install-outbox.sh --uninstall stop it and remove the job (the outbox folder is kept)
@@ -20,5 +20,5 @@ sed -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" "scripts/launchd/$LABEL.plis
 plutil -lint "$PLIST" >/dev/null
 launchctl bootstrap "$DOMAIN" "$PLIST"
 launchctl kickstart "$DOMAIN/$LABEL"
-echo "Installed $LABEL: runs at login, every 10 minutes, and when ~/kdash-outbox changes"
+echo "Installed $LABEL: runs at login, every minute, and when ~/kdash-outbox changes"
 echo "Log: $HOME/Library/Logs/koreader-dash-outbox.log"

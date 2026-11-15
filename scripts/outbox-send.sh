@@ -1,6 +1,6 @@
 #!/bin/sh
 # Sends every Markdown file in the outbox (default ~/kdash-outbox) to the Kindle inbox via inbox-send.sh.
-# Run by launchd (com.abharosim.koreader-dash.outbox) every 10 minutes and when the folder changes.
+# Run by launchd (com.abharosim.koreader-dash.outbox) every minute and when the folder changes.
 #   exit 0 from inbox-send -> moved to sent/
 #   exit 3 (Kindle unreachable) -> left in place for the next run
 #   anything else -> moved to failed/
