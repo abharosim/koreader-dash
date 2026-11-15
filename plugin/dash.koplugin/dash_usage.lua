@@ -95,7 +95,7 @@ function Usage.describe(provider, entry, now)
 
     local resets_at = number(entry.resets_at)
     local reset_passed = resets_at and resets_at <= now
-    local resets = resets_at and not reset_passed and ("resets " .. whenText(resets_at, now)) or nil
+    local resets = resets_at and not reset_passed and ("RE " .. whenText(resets_at, now)) or nil
     local detail = text(entry.detail, 60)
     -- One line keeps the tiles short; senders should keep the detail brief.
     if detail and resets then

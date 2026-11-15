@@ -37,15 +37,15 @@ local plan = Usage.describe(GROK, {
 check("percent becomes the headline", plan.headline, "17%")
 check("percent drives the bar", plan.pct, 17.4)
 check("a label replaces the title", plan.title, "Grok Bot")
-check("a reset over 6 days away shows the date", plan.line, "resets Nov 20")
+check("a reset over 6 days away shows the date", plan.line, "RE Nov 20")
 check("updated today shows the time", plan.updated, "01:29")
 check("fresh data isn't stale", plan.stale, false)
 
 local soon = Usage.describe(GROK, { used_pct = 50, resets_at = utc(2026, 11, 15, 1, 0), updated_at = now }, now)
-check("a reset within days shows weekday and time", soon.line, "resets Sat 20:00")
+check("a reset within days shows weekday and time", soon.line, "RE Sat 20:00")
 
-local both = Usage.describe(GROK, { used_pct = 50, detail = "week", resets_at = utc(2026, 11, 15, 1, 0) }, now)
-check("detail and reset share one line", both.line, "week · resets Sat 20:00")
+local both = Usage.describe(GROK, { used_pct = 50, detail = "W", resets_at = utc(2026, 11, 15, 1, 0) }, now)
+check("detail and reset share one line", both.line, "W · RE Sat 20:00")
 
 check("percent is clamped", Usage.describe(GROK, { used_pct = 140 }, now).pct, 100)
 check("percent rounds", Usage.describe(GROK, { used_pct = 99.6 }, now).headline, "100%")

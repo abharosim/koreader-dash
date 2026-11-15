@@ -112,7 +112,7 @@ fetch_anthropic() {
             resets_at: (.seven_day.resets_at | epoch),
             headline: ((.seven_day.utilization | floor | tostring) + "% · 5h "
                        + ((.five_hour.utilization // 0) | floor | tostring) + "%"),
-            detail: "week" }
+            detail: "W" }
         | with_entries(select(.value != null))' 2>/dev/null)
     [ -n "$info" ] || { warn "Claude usage response had no weekly figure"; return 0; }
     patch=$(printf '%s' "$patch" | jq -c --argjson i "$info" --argjson t "$now" \
