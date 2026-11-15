@@ -7,7 +7,7 @@
 #   DEEPSEEK_API_KEY       DeepSeek balance (GET api.deepseek.com/user/balance)
 #   XAI_MANAGEMENT_KEY     xAI API prepaid credit balance, with XAI_TEAM_ID
 #                          (GET management-api.x.ai/v1/billing/teams/{team}/prepaid/balance)
-#   CLAUDE_OAUTH_TOKEN     Claude plan usage (5-hour and weekly) from the endpoint Claude Code's
+#   CLAUDE_OAUTH_TOKEN     (or CLAUDE_CODE_OAUTH_TOKEN) Claude plan usage (5-hour and weekly) from the endpoint Claude Code's
 #                          /usage uses. Undocumented, so it may break. Or set
 #                          KDASH_CLAUDE_FROM_KEYCHAIN=1 to read Claude Code's own login from the
 #                          macOS Keychain each run instead of storing a token.
@@ -29,7 +29,7 @@
 #   scripts/ai-usage.sh                                   # fetch everything configured
 #   scripts/ai-usage.sh --grok-pct 17.4 --grok-resets 2026-11-20T23:24:00Z
 #   scripts/ai-usage.sh --gemini-spent 3.20 --gemini-detail "Nov, API"
-# Run it from cron or launchd (e.g. every 15 minutes) to keep the tiles current.
+# Run it from cron or launchd (scripts/install-launchd.sh runs it every 30 minutes) to keep the tiles current.
 set -u
 cd "$(dirname "$0")/.."
 [ -f .env ] && . ./.env
@@ -88,10 +88,17 @@ fetch_grok_api() {
 }
 
 fetch_anthropic() {
-    token="${CLAUDE_OAUTH_TOKEN:-}"
-    if [ -z "$token" ] && [ "${KDASH_CLAUDE_FROM_KEYCHAIN:-}" = "1" ]; then
+    # KDASH_CLAUDE_FROM_KEYCHAIN=1 reuses Claude Code's own login, which has the user:profile
+    # scope this endpoint needs. Long-lived tokens from `claude setup-token` don't (HTTP 403).
+    token=""
+    if [ "${KDASH_CLAUDE_FROM_KEYCHAIN:-}" = "1" ]; then
         token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
             | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    fi
+    # Otherwise accept the name Claude Code uses too, and an OAuth token (sk-ant-oat...) saved as ANTHROPIC_API_KEY.
+    [ -n "$token" ] || token="${CLAUDE_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}"
+    if [ -z "$token" ]; then
+        case "${ANTHROPIC_API_KEY:-}" in sk-ant-oat*) token=$ANTHROPIC_API_KEY ;; esac
     fi
     [ -n "$token" ] || return 0
     response=$(curl -sf --max-time 10 https://api.anthropic.com/api/oauth/usage \

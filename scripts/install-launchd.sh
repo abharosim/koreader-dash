@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs a launchd job that runs scripts/ai-usage.sh at login and every 30 minutes,
-# sending AI usage to the dashboard. Keys come from .env, as when run by hand.
+# sending AI usage to the dashboard. API keys come from 1Password via aikey when installed, else .env.
 # Log: ~/Library/Logs/koreader-dash-ai-usage.log
 #   scripts/install-launchd.sh             install (or reinstall) and run once now
 #   scripts/install-launchd.sh --uninstall stop it and remove the job
