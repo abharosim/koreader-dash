@@ -43,6 +43,19 @@ def curl(args, stdin_text):
     return code.strip(), body
 
 
+def describe_error(tok, body):
+    # Anthropic returns {"error": {"type": ..., "message": ...}}; OAuth servers may return
+    # {"error": "...", "error_description": "..."}. Never echo tokens: only these fields or a short body.
+    err = tok.get("error") if isinstance(tok, dict) else None
+    if isinstance(err, dict):
+        msg = "%s: %s" % (err.get("type", "error"), err.get("message", ""))
+    elif err:
+        msg = "%s: %s" % (err, tok.get("error_description", ""))
+    else:
+        msg = body
+    return str(msg).strip()[:200]
+
+
 def keychain_save(creds):
     value = base64.b64encode(json.dumps(creds).encode()).decode()
     cmd = 'add-generic-password -U -s %s -a %s -l "koreader-dash Claude usage login" -w %s\n' % (SERVICE, ACCOUNT, value)
@@ -139,7 +152,7 @@ def main():
     except ValueError:
         tok = {}
     if code != "200" or not tok.get("access_token"):
-        sys.exit("Token exchange failed (HTTP %s): %s" % (code, (tok.get("error_description") or tok.get("error") or body)[:200]))
+        sys.exit("Token exchange failed (HTTP %s): %s" % (code, describe_error(tok, body)))
     creds = {"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", ""),
              "expires_at": int(time.time()) + int(tok.get("expires_in", 3600))}
     keychain_save(creds)
