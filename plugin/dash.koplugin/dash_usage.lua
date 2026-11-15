@@ -108,10 +108,12 @@ function Usage.describe(provider, entry, now)
     local expires_at = number(entry.expires_at)
         or (updated_at and updated_at + Usage.STALE_AFTER_SECONDS)
     result.stale = (expires_at ~= nil and now >= expires_at) or reset_passed or false
+    -- A sender can name the stale state itself (e.g. "已过期"), at most 24 bytes.
+    local stale_word = text(entry.stale_label, 24) or "stale"
     if updated_at then
-        result.updated = (result.stale and "stale " or "") .. updatedText(updated_at, now)
+        result.updated = (result.stale and (stale_word .. " ") or "") .. updatedText(updated_at, now)
     else
-        result.updated = result.stale and "stale" or ""
+        result.updated = result.stale and stale_word or ""
     end
     return result
 end

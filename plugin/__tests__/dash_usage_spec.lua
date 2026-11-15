@@ -63,6 +63,11 @@ check("an entry with nothing usable shows a dash", Usage.describe(GROK, { note =
 local old = Usage.describe(GROK, { used_pct = 10, updated_at = now - 2 * 86400 }, now)
 check("data over a day old is stale", old.stale, true)
 check("stale data says so with its date", old.updated, "stale Nov 12")
+check("a sender's stale label replaces the word stale",
+    Usage.describe(GROK, { used_pct = 10, updated_at = now - 2 * 86400, stale_label = "已过期" }, now).updated,
+    "已过期 Nov 12")
+check("an expired entry with a label is stale",
+    Usage.describe(GROK, { used_pct = 10, updated_at = now - 60, expires_at = 1, stale_label = "已过期" }, now).stale, true)
 check("expires_at overrides the default age",
     Usage.describe(GROK, { used_pct = 10, updated_at = now - 2 * 86400, expires_at = now + 60 }, now).stale, false)
 local reset = Usage.describe(GROK, { used_pct = 90, resets_at = now - 60, updated_at = now - 3600 }, now)

@@ -10,8 +10,10 @@
 #                          (GET management-api.x.ai/v1/billing/teams/{team}/prepaid/balance)
 #   CLAUDE_OAUTH_TOKEN     (or CLAUDE_CODE_OAUTH_TOKEN) Claude plan usage (5-hour and weekly) from the endpoint Claude Code's
 #                          /usage uses. Undocumented, so it may break. Or set
-#                          KDASH_CLAUDE_FROM_KEYCHAIN=1 to read Claude Code's own login from the
-#                          macOS Keychain each run instead of storing a token.
+#                          KDASH_CLAUDE_FROM_KEYCHAIN=1 (the launchd job) to use koreader-dash's own Claude
+#                          login (scripts/claude-login.py, Keychain item koreader-dash-claude-oauth), which it
+#                          refreshes itself; without that login it reads Claude Code's login read-only while valid.
+#                          When the fetch fails, the tile keeps its numbers and is marked 已过期 (stale).
 # Gemini and Grok plans have no usage API, so pass them by hand:
 #   --<provider>-pct N        percent of the plan used, 0-100
 #   --<provider>-resets T     when the plan resets: Unix seconds or 2026-11-20T23:24:00Z
@@ -100,24 +102,88 @@ fetch_xai() {
         '.xai = { spent: ($s | tonumber), currency: "USD", detail: $d, updated_at: $t }')
 }
 
+# Keeps the last Claude numbers on the tile but marks them stale ("已过期" plus the last update time).
+# expires_at 1 is a fixed past time, so repeat failures don't count as changes.
+mark_claude_stale() {
+    warn "Claude: $1; tile marked stale"
+    patch=$(printf '%s' "$patch" | jq -c '.anthropic = {expires_at: 1, stale_label: "已过期"}')
+}
+
 fetch_anthropic() {
-    # KDASH_CLAUDE_FROM_KEYCHAIN=1 reuses Claude Code's own login, which has the user:profile
-    # scope this endpoint needs. Long-lived tokens from `claude setup-token` don't (HTTP 403).
-    token=""
-    if [ "${KDASH_CLAUDE_FROM_KEYCHAIN:-}" = "1" ]; then
-        token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
-            | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    token="" src=""
+    use_kc=0; [ "${KDASH_CLAUDE_FROM_KEYCHAIN:-}" = "1" ] && use_kc=1
+    if [ "$use_kc" = 1 ]; then
+        . scripts/lib/claude-oauth.sh
+        retry_file="$CLAUDE_STATE_DIR/claude-retry-after"
+        if [ -f "$retry_file" ] && [ "$now" -lt "$(cat "$retry_file" 2>/dev/null || echo 0)" ]; then
+            warn "Claude: rate limited until $(date -r "$(cat "$retry_file")" '+%H:%M'); skipped"
+            return 0
+        fi
+        claude_lock || { warn "Claude: another run is refreshing the login; skipped"; return 0; }
+        creds=$(claude_oauth_load)
+        if [ -n "$creds" ]; then
+            src=own
+            exp=$(printf '%s' "$creds" | jq -r '.expires_at // 0')
+            if [ $((exp - now)) -lt 300 ]; then
+                new=$(claude_oauth_refresh "$creds"); rc=$?
+                case $rc in
+                    0) creds=$new ;;
+                    2) claude_unlock; mark_claude_stale "koreader-dash's Claude login has ended; run scripts/claude-login.py"; return 0 ;;
+                    *) claude_unlock; mark_claude_stale "token refresh failed (network?)"; return 0 ;;
+                esac
+            fi
+            token=$(printf '%s' "$creds" | jq -r '.access_token // empty')
+        else
+            # Fallback: read Claude Code's own login, read-only, and only while it hasn't expired.
+            # It is never refreshed or written here: its refresh token is single-use and rotating.
+            cc=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+            cc_exp=$(printf '%s' "$cc" | jq -r '(.claudeAiOauth.expiresAt // 0) / 1000 | floor' 2>/dev/null)
+            if [ "${cc_exp:-0}" -gt "$now" ]; then
+                token=$(printf '%s' "$cc" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+                src=claude-code
+            fi
+        fi
     fi
     # Otherwise accept the name Claude Code uses too, and an OAuth token (sk-ant-oat...) saved as ANTHROPIC_API_KEY.
-    [ -n "$token" ] || token="${CLAUDE_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}"
+    [ -n "$token" ] || { token="${CLAUDE_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}"; [ -n "$token" ] && src=env; }
     if [ -z "$token" ]; then
-        case "${ANTHROPIC_API_KEY:-}" in sk-ant-oat*) token=$ANTHROPIC_API_KEY ;; esac
+        case "${ANTHROPIC_API_KEY:-}" in sk-ant-oat*) token=$ANTHROPIC_API_KEY; src=env ;; esac
     fi
-    [ -n "$token" ] || return 0
-    response=$(curl -sf --max-time 10 https://api.anthropic.com/api/oauth/usage \
-        -H "Authorization: Bearer $token" -H "anthropic-beta: oauth-2025-04-20" \
-        -H "Accept: application/json") \
-        || { warn "Claude usage request failed (token expired? the endpoint is undocumented)"; return 0; }
+    if [ -z "$token" ]; then
+        [ "$use_kc" = 1 ] && { claude_unlock; mark_claude_stale "no valid login (run scripts/claude-login.py)"; }
+        return 0
+    fi
+
+    body_file=$(mktemp); head_file=$(mktemp)
+    if [ "$use_kc" = 1 ]; then
+        status=$(claude_usage_get "$token" "$body_file" "$head_file")
+        # One forced refresh if the server rejects a token we thought was still valid.
+        if [ "$status" = 401 ] && [ "$src" = own ]; then
+            new=$(claude_oauth_refresh "$creds") && {
+                creds=$new; token=$(printf '%s' "$creds" | jq -r '.access_token')
+                status=$(claude_usage_get "$token" "$body_file" "$head_file"); }
+        fi
+        claude_unlock
+    else
+        status=$(curl -s -o "$body_file" -D "$head_file" -w '%{http_code}' --max-time 10 "https://api.anthropic.com/api/oauth/usage" \
+            -H "Authorization: Bearer $token" -H "anthropic-beta: oauth-2025-04-20" -H "Accept: application/json") || status=000
+    fi
+    response=$(cat "$body_file"); retry=$(tr -d '\r' < "$head_file" | awk -F': *' 'tolower($1)=="retry-after" {print $2}' | tail -n 1)
+    rm -f "$body_file" "$head_file"
+    case "$status" in
+        200) ;;
+        429)
+            # Honour Retry-After; when it's missing or 0, wait 10 minutes. At most an hour.
+            case "$retry" in ''|*[!0-9]*) retry=0 ;; esac
+            [ "$retry" -ge 600 ] || retry=600; [ "$retry" -le 3600 ] || retry=3600
+            [ "$use_kc" = 1 ] && echo $((now + retry)) > "$retry_file"
+            warn "Claude: rate limited (429); next try after $((retry / 60)) minutes"
+            return 0 ;;
+        *)
+            if [ "$use_kc" = 1 ]; then mark_claude_stale "usage request failed (HTTP $status, $src login)"
+            else warn "Claude usage request failed (HTTP $status)"; fi
+            return 0 ;;
+    esac
     info=$(printf '%s' "$response" | jq -c '
         def epoch: if . == null then null else sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601 end;
         select(.seven_day != null)
@@ -127,9 +193,10 @@ fetch_anthropic() {
                        + ((.five_hour.utilization // 0) | floor | tostring) + "%"),
             detail: "W" }
         | with_entries(select(.value != null))' 2>/dev/null)
-    [ -n "$info" ] || { warn "Claude usage response had no weekly figure"; return 0; }
+    [ -n "$info" ] || { [ "$use_kc" = 1 ] && mark_claude_stale "response had no weekly figure" || warn "Claude usage response had no weekly figure"; return 0; }
+    # null clears an earlier stale mark (PUT /v1/state is a merge patch).
     patch=$(printf '%s' "$patch" | jq -c --argjson i "$info" --argjson t "$now" \
-        '.anthropic = ($i + {updated_at: $t})')
+        '.anthropic = ($i + {updated_at: $t, expires_at: null, stale_label: null})')
 }
 
 fetch_deepseek
