@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: scripts/install-outbox.sh replaces __REPO__ and __HOME__ and installs it to ~/Library/LaunchAgents.
+     Runs scripts/outbox-send.sh at login, every 10 minutes, and when ~/kdash-outbox changes. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.abharosim.koreader-dash.outbox</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>__REPO__/scripts/outbox-send.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>600</integer>
+    <key>WatchPaths</key>
+    <array>
+        <string>__HOME__/kdash-outbox</string>
+    </array>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/koreader-dash-outbox.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/koreader-dash-outbox.log</string>
+</dict>
+</plist>
