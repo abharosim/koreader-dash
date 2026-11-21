@@ -18,6 +18,8 @@ KOReader Dash inbox on the Kindle (port 8787)
 
 There's no GitHub or cloud relay, on purpose. The briefing contains private email, calendar and todo content, so it only travels from the box to the Mac to the Kindle, and the last step stays on the LAN.
 
+Audi entries use a different folder, `~/kdash-audi/`, and a different request, `POST /v1/audi`. The same launchd job delivers both. Briefing files stay `--source dada --type briefing.daily`. See [audi-mode-setup.md](audi-mode-setup.md).
+
 ## 2. Grok Bot side
 
 - **Routine:** "Kindle morning briefing", owned by DaDa.

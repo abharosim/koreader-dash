@@ -16,6 +16,7 @@ local _ = require("gettext")
 
 local DashTime = require("dash_time")
 local Api = require("dash_api")
+local AudiStore = require("dash_audi_store")
 local Battery = require("dash_battery")
 local Dashboard = require("dash_dashboard")
 local DashHome = require("dash_home")
@@ -36,6 +37,8 @@ local OPEN_REQUEST_DELAY_SECONDS = 2
 -- Below this, sleeping wins over opening Dash unless the Kindle is charging.
 local LOW_BATTERY_PERCENT = 20
 local REPLACES_SLEEP_SETTING = "dash_replaces_sleep"
+-- nil means on, so a new install opens Audi when an entry arrives.
+local AUDI_AUTO_SETTING = "dash_audi_auto_switch"
 local FIREWALL_RULES = {
     "INPUT -p tcp --dport %d -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT",
     "OUTPUT -p tcp --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT",
@@ -128,21 +131,37 @@ local function statusText()
     if Runtime.store and Runtime.store.warning then
         table.insert(lines, Runtime.store.warning)
     end
+    if Runtime.audi and Runtime.audi.warning then
+        table.insert(lines, Runtime.audi.warning)
+    end
     return table.concat(lines, "\n")
+end
+
+local function configPath()
+    return DataStorage:getSettingsDir() .. "/dash_config.json"
+end
+
+local function readConfig()
+    local file = io.open(configPath(), "r")
+    if not file then
+        return nil
+    end
+    local content = file:read("*a")
+    file:close()
+    local ok, config = pcall(json.decode, content)
+    if ok and type(config) == "table" then
+        return config
+    end
+    return nil
 end
 
 -- Reads the saved token, or creates one. Returns nil if no secure randomness is available.
 local function loadToken()
-    local path = DataStorage:getSettingsDir() .. "/dash_config.json"
-    local file = io.open(path, "r")
-    if file then
-        local content = file:read("*a")
-        file:close()
-        local ok, config = pcall(json.decode, content)
-        if ok and type(config) == "table" and type(config.token) == "string" and #config.token >= 32 then
-            return config.token
-        end
+    local config = readConfig()
+    if config and type(config.token) == "string" and #config.token >= 32 then
+        return config.token
     end
+    local path = configPath()
 
     local random = io.open("/dev/urandom", "rb")
     local bytes = random and random:read(16)
@@ -167,6 +186,20 @@ local function loadToken()
     return token
 end
 
+local function audiAutoSwitch()
+    return G_reader_settings:nilOrTrue(AUDI_AUTO_SETTING)
+end
+
+-- dash_config.json may set audi_history_limit. Missing or invalid keeps the store default.
+local function audiHistoryLimit()
+    local config = readConfig()
+    local limit = config and tonumber(config.audi_history_limit)
+    if limit and limit >= 1 and limit == math.floor(limit) and limit <= 1000 then
+        return limit
+    end
+    return nil
+end
+
 local function saveNow()
     Runtime.save_scheduled = false
     if Runtime.store then
@@ -175,15 +208,57 @@ local function saveNow()
             logger.warn("Dash: failed to save:", err)
         end
     end
+    if Runtime.audi then
+        local ok, err = Runtime.audi:flush()
+        if not ok then
+            logger.warn("Dash: failed to save Audi:", err)
+        end
+    end
 end
 
-local function onStoreChange()
+local function scheduleSave()
     if not Runtime.save_scheduled then
         Runtime.save_scheduled = true
         UIManager:scheduleIn(SAVE_DELAY_SECONDS, saveNow)
     end
+end
+
+local function onStoreChange()
+    scheduleSave()
     if Runtime.dashboard then
         Runtime.dashboard:scheduleRebuild()
+    end
+end
+
+-- Inbox changes stay on the 1 second partial rebuild. Audi changes redraw immediately,
+-- and a new or updated entry can take over the screen.
+local function onAudiChange(info)
+    scheduleSave()
+    local dash = Runtime.dashboard
+    if not dash or not info or info.kind == "shown" or info.kind == "view" then
+        return
+    end
+    if info.kind == "cleared" then
+        if dash.mode == "audi" then
+            dash:showAudi("full")
+        elseif info.show then
+            dash:rebuild("partial")
+        end
+        return
+    end
+    if info.kind == "deleted" then
+        if dash.mode == "audi" then
+            dash:showAudi("partial")
+        end
+        return
+    end
+    if not info.show then
+        return
+    end
+    if audiAutoSwitch() or dash.mode == "audi" then
+        dash:showAudi("full")
+    else
+        dash:rebuild("partial")
     end
 end
 
@@ -204,6 +279,20 @@ local function ensureData()
     store:load()
     Runtime.store = store
 
+    local audi = AudiStore.new{
+        path = DataStorage:getSettingsDir() .. "/dash_audi.json",
+        body_dir = DataStorage:getSettingsDir() .. "/dash_audi_bodies",
+        make_dir = function(path)
+            if lfs.attributes(path, "mode") ~= "directory" then
+                lfs.mkdir(path)
+            end
+        end,
+        limit = audiHistoryLimit(),
+        on_change = onAudiChange,
+    }
+    audi:load()
+    Runtime.audi = audi
+
     Runtime.battery = Battery.new{ path = DataStorage:getSettingsDir() .. "/dash_battery.json" }
     Runtime.battery:load()
 
@@ -214,6 +303,7 @@ local function ensureData()
     end
     Runtime.api = Api.new{
         store = store,
+        audi = audi,
         token = token,
         on_ping = function()
             Runtime.pings = Runtime.pings + 1
@@ -351,6 +441,7 @@ local function openDashboard()
     recordBattery()
     Runtime.dashboard = Dashboard:new{
         store = Runtime.store,
+        audi = Runtime.audi,
         get_status = statusText,
         get_drain = drainText,
         on_minute = function()
@@ -470,6 +561,12 @@ function Dash:addToMainMenu(menu_items)
                 checked_func = replacesSleep,
                 callback = function() G_reader_settings:flipNilOrTrue(REPLACES_SLEEP_SETTING) end,
             },
+            {
+                text = _("Open Audi mode for new items"),
+                help_text = _("When a new Audi entry arrives, open it and refresh the whole screen. While locked, that entry can still be scrolled."),
+                checked_func = audiAutoSwitch,
+                callback = function() G_reader_settings:flipNilOrTrue(AUDI_AUTO_SETTING) end,
+            },
         },
     }
 end
@@ -490,7 +587,11 @@ function Dash:onResume()
         recordBattery()
         startServer()
         Runtime.dashboard:startClock()
-        UIManager:setDirty(Runtime.dashboard, "full")
+        if Runtime.audi and Runtime.audi.pending_show and audiAutoSwitch() then
+            Runtime.dashboard:showAudi("full")
+        else
+            UIManager:setDirty(Runtime.dashboard, "full")
+        end
         logEvent("resume")
     end
 end

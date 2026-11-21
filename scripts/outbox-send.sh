@@ -30,4 +30,7 @@ for f in "$OUTBOX"/*.md; do
         *) mv -f "$f" "$OUTBOX/failed/"; log "FAILED $name (exit $rc): $result" ;;
     esac
 done
+# Audi uses the same job and the same retry rules, but a different directory and script,
+# so a briefing is never posted as an Audi entry (and the reverse).
+"$SCRIPTS/audi-outbox-send.sh"
 exit 0

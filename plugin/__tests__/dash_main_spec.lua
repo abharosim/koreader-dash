@@ -219,6 +219,17 @@ test("adds a menu entry", function()
     assert(items.dash.text and open_item.callback, "menu item missing")
 end)
 
+test("Audi auto-switch is on in the menu until turned off", function()
+    local item = items.dash.sub_item_table[3]
+    assert(item, "no Audi menu item")
+    assert(item.text == "Open Audi mode for new items", item.text)
+    assert(item.checked_func(), "auto-switch should default on")
+    item.callback()
+    assert(not item.checked_func(), "callback didn't turn it off")
+    item.callback()
+    assert(item.checked_func(), "callback didn't turn it back on")
+end)
+
 test("registers an Open Dash action for gestures", function()
     local action = registered_actions.dash_open
     assert(action, "action not registered")
@@ -549,6 +560,171 @@ test("the gesture action opens the dashboard", function()
     local count = #shown
     plugin:onOpenDash()
     assert(#shown == count + 1 and dashboard().get_status, "dashboard not opened by the action")
+end)
+
+test("Audi sits left of Lock, the same size, on the bottom row", function()
+    local dash = dashboard()
+    local audi, lock, exit = dash.audi_button, dash.lock_button, dash.exit_button
+    assert(audi, "no Audi button")
+    assert(audi.text == "Audi", "label: " .. tostring(audi.text))
+    assert(audi.width == lock.width and lock.width == exit.width, "different widths")
+    assert(audi.overlap_offset[2] == lock.overlap_offset[2], "not on the same row as Lock")
+    assert(lock.overlap_offset[2] == exit.overlap_offset[2], "Lock and Exit split rows")
+    assert(audi.overlap_offset[1] < lock.overlap_offset[1], "Audi is not left of Lock")
+    assert(lock.overlap_offset[1] < exit.overlap_offset[1], "Lock is not left of Exit")
+    assert(not audi.preselect, "Audi looks selected on the dashboard")
+end)
+
+test("Audi toggles a fullscreen idle view and back to Dash", function()
+    local dash = dashboard()
+    dash:toggleAudi()
+    assert(dash.mode == "audi", "not in Audi mode")
+    assert(dash.audi_button.preselect == true, "Audi button not marked selected")
+    assert(findText(dash[1], "暂无内容"), "idle text missing")
+    assert(not findText(dash[1], "Inbox"), "dashboard inbox still shown")
+    dash:toggleAudi()
+    assert(dash.mode == "dash", "didn't return to Dash")
+    assert(findText(dash[1], "Inbox"), "inbox missing after leaving Audi")
+    assert(not dash.audi_button.preselect, "Audi still looks selected")
+end)
+
+test("a new Audi entry auto-switches with a full refresh and is not in the inbox", function()
+    local dash = dashboard()
+    local unread = dash.store:unreadCount()
+    refreshes = {}
+    local response = httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"audi-test-12","ref":12,"title":"DeepSeek review","source":"DeepSeek","body":"## Summary\\n\\n<script>no</script> and **bold**"}')
+    assert(response:find("201 Created", 1, true), response)
+    assert(dash.mode == "audi", "didn't enter Audi mode")
+    local full = false
+    for _, refresh in ipairs(refreshes) do
+        if refresh.widget == dash and refresh.type == "full" then full = true end
+    end
+    assert(full, "new Audi entry didn't request a full refresh")
+    assert(findText(dash[1], "DeepSeek review"), "title missing")
+    local meta = findWidget(dash[1], function(widget)
+        return type(widget.text) == "string" and widget.text:find("#12", 1, true) and widget.text:find("DeepSeek", 1, true)
+    end)
+    assert(meta, "header missing #ref and source")
+    assert(meta.text:find("%d%d:%d%d"), "header missing the time")
+    local html_widget = findWidget(dash[1], function(widget) return widget.html_body ~= nil end)
+    assert(html_widget, "no Markdown body")
+    assert(html_widget.html_body:find("&lt;script&gt;", 1, true), "raw HTML not escaped: " .. html_widget.html_body)
+    assert(html_widget.html_body:find("<strong>bold</strong>", 1, true), html_widget.html_body)
+    assert(not findText(dash[1], "Mark as read"), "Audi view has a reply button")
+    assert(dash.store:unreadCount() == unread, "Audi entry landed in the inbox")
+    assert(dash.store:getMessage("audi-test-12") == nil, "Audi id is an inbox message")
+    local inbox = httpRequest("GET", "/v1/inbox", readToken())
+    assert(not inbox:find("DeepSeek review", 1, true), inbox)
+    assert(dash.audi_index == 1, "not showing the only entry")
+    assert(findText(dash[1], "1/1"), "position missing")
+end)
+
+test("an open inbox reader closes when Audi auto-switches", function()
+    local dash = dashboard()
+    dash:toggleAudi()
+    assert(dash.mode == "dash", "setup")
+    local message = dash.store.messages[1]
+    assert(message, "need an inbox message")
+    dash:openMessage(message)
+    local view = lastShown()
+    assert(view ~= dash, "reader didn't open")
+    httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"audi-test-12","title":"DeepSeek review","body":"Updated body"}')
+    assert(closed[#closed] == view, "inbox reader stayed open")
+    assert(dash.mode == "audi", "didn't return to Audi")
+    assert(dash.audi:get("audi-test-12").ref == 12, "update didn't keep ref")
+end)
+
+test("locked Audi mode scrolls the current entry only", function()
+    local dash = dashboard()
+    httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"audi-older","ref":11,"title":"Older note","source":"Audi","body":"Previous"}')
+    -- The new row is older in time but appended, so it is last. Put the view on it.
+    assert(dash.mode == "audi", "not in Audi")
+    assert(#dash.audi.entries >= 2, "need two entries")
+    assert(dash.audi_index == #dash.audi.entries, "new entry wasn't shown")
+    local index = dash.audi_index
+    assert(dash.audi_scroll, "no scroller")
+    holdLock()
+    assert(dash.locked, "not locked")
+    dash.audi_scroll.received = 0
+    dash.exit_button.received = 0
+    dash.audi_button.received = 0
+    dash.lock_button.received = 0
+    if dash.audi_prev then dash.audi_prev.received = 0 end
+    assert(dash:handleEvent({ handler = "onGesture" }) == true, "gesture not swallowed")
+    assert(dash.audi_scroll.received == 1, "the entry didn't get the scroll gesture")
+    assert(dash.lock_button.received == 1, "Lock didn't get the gesture")
+    assert(dash.exit_button.received == 0, "Exit got a gesture while locked")
+    assert(dash.audi_button.received == 0, "Audi got a gesture while locked")
+    if dash.audi_prev then
+        assert(dash.audi_prev.received == 0, "history button got a gesture while locked")
+    end
+    dash:pageAudi(-1)
+    assert(dash.audi_index == index, "history paging worked while locked")
+    dash:toggleAudi()
+    assert(dash.mode == "audi", "locked Audi returned to Dash")
+    holdLock()
+    assert(not dash.locked, "still locked")
+    dash:pageAudi(-1)
+    assert(dash.audi_index == index - 1, "paging didn't work after unlock")
+    dash:toggleAudi()
+    assert(dash.mode == "dash", "didn't leave Audi")
+end)
+
+test("auto-switch off keeps Dash up and badges the Audi button", function()
+    local dash = dashboard()
+    assert(dash.mode == "dash", "setup")
+    reader_settings.dash_audi_auto_switch = false
+    dash.minutes_since_full_refresh = 0
+    refreshes = {}
+    httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"audi-quiet","ref":14,"title":"Quiet note","source":"Audi","body":"Later"}')
+    assert(dash.mode == "dash", "auto-switch off still entered Audi")
+    assert(dash.audi_button.text == "Audi·1", "badge: " .. tostring(dash.audi_button.text))
+    local switched = false
+    for _, refresh in ipairs(refreshes) do
+        if refresh.widget == dash and refresh.type == "full" then switched = true end
+    end
+    assert(not switched, "auto-switch off still full-refreshed into Audi")
+    reader_settings.dash_audi_auto_switch = nil
+end)
+
+test("resume opens an unshown Audi entry when auto-switch is on", function()
+    local dash = dashboard()
+    reader_settings.dash_audi_auto_switch = false
+    httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"audi-while-away","ref":15,"title":"While away","body":"Pending"}')
+    assert(dash.mode == "dash", "setup")
+    assert(dash.audi.pending_show == true, "entry was already shown")
+    reader_settings.dash_audi_auto_switch = nil
+    refreshes = {}
+    plugin:onSuspend()
+    plugin:onResume()
+    assert(dash.mode == "audi", "resume didn't open Audi")
+    assert(dash.audi.pending_show == false, "still pending after it was shown")
+    assert(findText(dash[1], "While away"), "resumed entry not shown")
+    local full = false
+    for _, refresh in ipairs(refreshes) do
+        if refresh.widget == dash and refresh.type == "full" then full = true end
+    end
+    assert(full, "resume didn't full-refresh Audi")
+    dash:toggleAudi()
+    assert(dash.mode == "dash", "cleanup")
+end)
+
+test("clear keeps Audi history and shows the idle line", function()
+    local dash = dashboard()
+    dash:toggleAudi()
+    local kept = #dash.audi.entries
+    assert(kept >= 1, "setup")
+    httpRequest("POST", "/v1/audi/clear", readToken(), "")
+    assert(dash.mode == "audi", "clear left Audi mode")
+    assert(#dash.audi.entries == kept, "clear deleted history")
+    assert(findText(dash[1], "暂无内容"), "idle text missing after clear")
+    assert(dash.audi:current() == nil, "still showing an entry")
+    dash:toggleAudi()
 end)
 
 test("tapping Exit saves data and undoes everything", function()

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Template: scripts/install-outbox.sh replaces __REPO__ and __HOME__ and installs it to ~/Library/LaunchAgents.
-     Runs scripts/outbox-send.sh at login, every minute, and when ~/kdash-outbox changes. -->
+     Runs scripts/outbox-send.sh at login, every minute, and when ~/kdash-outbox or ~/kdash-audi changes. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -25,6 +25,7 @@
     <key>WatchPaths</key>
     <array>
         <string>__HOME__/kdash-outbox</string>
+        <string>__HOME__/kdash-audi</string>
     </array>
     <key>ProcessType</key>
     <string>Background</string>

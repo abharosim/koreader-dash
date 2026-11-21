@@ -1,6 +1,6 @@
 # KOReader Dash: Specification
 
-An always-on dashboard for a Kindle Paperwhite 4. It shows the date, time and battery, values sent to it over HTTP (weather, a todo count and AI usage), and an inbox of messages you can mark as read.
+An always-on dashboard for a Kindle Paperwhite 4. It shows the date, time and battery, values sent to it over HTTP (weather, a todo count and AI usage), an inbox of messages you can mark as read, and an Audi view that displays one pushed Markdown entry at a time.
 
 **Status:** in progress. See the [build plan](#7-build-plan).
 **Target:** Kindle Paperwhite 4 with KOReader v2026.07.1. Source references were read from KOReader `master`.
@@ -10,7 +10,7 @@ An always-on dashboard for a Kindle Paperwhite 4. It shows the date, time and ba
 ## 1. Principles
 
 1. **The Kindle mostly displays.** Senders push data to it. The one exception is weather, which the Kindle fetches itself ([section 6](#weather)) so it works without the Mac.
-2. **Two kinds of data.** One JSON **state** blob holds current values, and an **inbox** queue holds messages.
+2. **Three kinds of data.** One JSON **state** blob holds current values, an **inbox** queue holds messages, and an **Audi** history holds entries pushed for the Audi view. Audi entries are stored separately and never appear in the inbox.
 3. **Everything but the clock, battery and weather is event-driven.** A value changes only when an HTTP request or a tap changes it.
 4. **No redraw without a change.** Sending the same state again doesn't touch the screen, so senders can repeat themselves freely.
 
@@ -65,7 +65,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 │ Hello from my Mac            [ Read ]│
 │ mac  ·  14:40                        │
 │                                      │
-│ 192.168.1.152:8787       [Lock][Exit]│
+│ 192.168.1.152:8787  [Audi][Lock][Exit]│
 └──────────────────────────────────────┘
 ```
 
@@ -79,7 +79,8 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 - **Tapping a message:** opens the reader, described below.
 - **Paging:** `<` and `>` appear when the messages don't fit on one page.
 - **Exit:** the button in the bottom right corner (15% of the screen width) closes the dashboard and returns to KOReader.
-- **Lock:** a **Lock** button sits left of Exit, the same size. Holding it locks the dashboard: it then reads **Locked**, and every other touch is ignored (Exit, Read, Read all, opening messages, the page buttons). Tapping it only shows a hint; holding it again unlocks. Only touch is blocked: the HTTP API, the clock and sleep work as usual. The lock isn't saved, so restarting KOReader clears it. Locking and unlocking are written to `dash_m0.log`.
+- **Lock:** a **Lock** button sits left of Exit, the same size. Holding it locks the dashboard: it then reads **Locked**. Tapping it only shows a hint; holding it again unlocks. While locked, touch does nothing except two cases: holding **Locked** unlocks, and, when Audi mode is showing an entry, scrolling or tapping through that entry's body still works. History paging, the Audi button, Exit, Read, Read all and opening messages stay blocked. Only touch is blocked: the HTTP API, the clock and sleep work as usual. The lock isn't saved, so restarting KOReader clears it. Locking and unlocking are written to `dash_m0.log`.
+- **Audi:** a third button, the same size, sits left of Lock. Tapping it opens Audi mode (the button is drawn inverted); tapping it again returns to the dashboard. See [Audi mode](#audi-mode).
 - **Read all:** shown in the inbox header, beside the page buttons, while anything is unread. It asks to confirm, then marks every message read in one save.
 - **Instead of sleeping:** when KOReader would go to sleep, it opens Dash instead. This covers the idle timer, the Sleep menu item and the Sleep gesture, which all go through `UIManager:suspend`. Exit returns to whatever was open before. Exceptions, which sleep as usual:
   - the power button (and a cover), because the Kindle's own power manager handles those before KOReader hears about them;
@@ -115,6 +116,20 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 
 **Raw HTML is never run.** `dash_markdown.lua` escapes every character first, so `<script>` appears as text. KOReader's bundled Markdown converter isn't used because it passes raw HTML through, even inside code blocks, and doesn't support tables.
 
+### Audi mode
+
+Audi mode replaces the clock, calendar, usage tiles and inbox with one entry. The bottom bar stays, so Audi, Lock and Exit remain available. There is no Mark as read button and no way to send a decision back.
+
+With nothing to show, the page says **暂无内容**.
+
+With an entry, the header shows the title, then `#12 · DeepSeek · 19:12` (the spoken `ref`, the source, and the time from `messageTime()`: `HH:MM` today, `Mon DD, HH:MM` on another day, US Eastern). `<` `>` and `3/12` on the right move through the saved history. The newest entry is last. Paging does not change `ref`. The body is the same Markdown as the inbox reader (`dash_markdown.lua` and `ScrollHtmlWidget`): swipe or tap to scroll. Links show their text, images show their alt text, and raw HTML is escaped.
+
+The device keeps the last 20 entries (`AUDI_HISTORY_LIMIT` in `dash_audi_store.lua`; `audi_history_limit` in `dash_config.json` overrides it). A 21st entry drops the oldest. There is no "unread, so keep it" rule.
+
+**Open Audi mode for new items** (Dash menu, saved as `dash_audi_auto_switch`) defaults to on. When a new entry arrives, or an existing one is updated, Dash closes an open inbox reader, switches to Audi mode, shows that entry, and does a `full` refresh. The same happens while the screen is locked: the new entry is shown and can be scrolled, and history paging, leaving Audi and Exit stay blocked. With the setting off, Dash stays where it is and the Audi button reads `Audi·N` until you open Audi mode. A retry of the same id with the same title and body does not refresh or switch. After the power button, if auto-switch is on and an entry arrived that was never shown, resume opens Audi mode and full-refreshes.
+
+`action: clear` (or `POST /v1/audi/clear`) returns to **暂无内容** and keeps the history.
+
 ### Refresh rules
 
 | Trigger | Refresh |
@@ -122,6 +137,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 | Each minute boundary | `ui`; only the changed text differs on screen |
 | The date changed, or weather expired | `full`, with the screen rebuilt |
 | State or inbox changed; changes are grouped over 1 second | `partial` |
+| A new or updated Audi entry is shown, or Audi mode is opened or closed | `full` |
 | Every 60 minutes | `full`, to clear ghosting |
 
 ---
@@ -143,6 +159,11 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 | `GET /v1/inbox/{id}` | Get one full message | `200` |
 | `PUT /v1/inbox/{id}` | Set `{"read": true}` or `{"read": false}` | `200` |
 | `DELETE /v1/inbox/{id}` | Remove a message; repeat calls also succeed | `204` |
+| `POST /v1/audi` | Create or update an Audi entry, or `{"action":"clear"}` | `201` created, `200` retry, update or clear |
+| `GET /v1/audi` | List Audi entries without bodies; newest last | `200` |
+| `GET /v1/audi/{id}` | Get one Audi entry, including `body` | `200` |
+| `DELETE /v1/audi/{id}` | Remove an Audi entry; repeat calls also succeed | `204` |
+| `POST /v1/audi/clear` | Show the Audi idle line; history is kept | `200` |
 
 ### State blob
 
@@ -235,6 +256,35 @@ jq -n --arg title "Weekly report" --rawfile body report.md '{title: $title, body
     -H "Authorization: Bearer $KDASH_TOKEN" --data-binary @-
 ```
 
+### Audi entry
+
+Audi entries are not inbox messages. `GET /v1/inbox` never returns them, and the inbox screen never lists them. They live in `dash_audi.json` and `dash_audi_bodies/`.
+
+| Field | Type | Set by | Rules |
+|---|---|---|---|
+| `title` | string | Sender | At most 300 bytes. Empty if omitted |
+| `body` | string | Sender | Markdown, at most 256 KB |
+| `source` | string | Sender | At most 64 bytes. `Audi` when omitted on create |
+| `id` | string | Sender or device | 1 to 64 of `A-Z a-z 0-9 . _ : -`; generated if omitted |
+| `ref` | integer | Sender or device | Positive integer shown as `#12`. Kept when the entry is updated. The device assigns the next number when omitted |
+| `replace_id` | string | Sender | Request only. Updates that id in place and keeps its `ref`. A missing id is stored as a new entry under `id` |
+| `created_at` | string | Sender | ISO 8601. The header uses it when it parses; otherwise `received_at` |
+| `action` | string | Sender | `clear` only. Shows the idle line and keeps history. Response `{"cleared": true}` |
+| `received_at` | integer | Device | Unix seconds |
+| `preview` | string | Device | Plain text from the start of the body, at most 200 bytes |
+
+`POST /v1/audi` returns `{id, ref, created, updated}`. The same id with the same title and body returns `200` and `"updated": false`, and does not refresh the screen. A changed title or body, or a `replace_id` that points at an existing entry, updates that row, keeps `ref`, and can auto-switch. `GET /v1/health` includes `audi_current_ref` (the ref on screen, or `null` when Audi is idle) when the Audi store is loaded.
+
+Creating, updating, clearing and deleting an Audi entry counts toward the same 60 changes a minute as inbox and state changes.
+
+```sh
+curl -X POST "$KDASH_URL/v1/audi" \
+  -H "Authorization: Bearer $KDASH_TOKEN" \
+  -d '{"id":"audi-test-12","ref":12,"title":"DeepSeek review","source":"DeepSeek","body":"## Summary\n\n- First point"}'
+```
+
+The Mac sender is `scripts/audi-push.sh`. Files dropped in `~/kdash-audi/` are delivered by the same launchd job as the morning briefing. Writing `name.md` directly is fine: the job sends a file only after its size and modification time are unchanged across about 2 seconds, and a file that is still changing stays put instead of moving to `failed/`. A rename from a dotfile such as `.name.tmp` still works. See [docs/audi-mode-setup.md](docs/audi-mode-setup.md).
+
 ### Errors
 
 Errors look like `{"error":"bad_field","message":"title is required"}`.
@@ -264,12 +314,14 @@ plugin/dash.koplugin/
 ├── dash_server.lua      # non-blocking HTTP; no KOReader imports
 ├── dash_api.lua         # routes, auth, validation
 ├── dash_store.lua       # state blob, inbox, JSON file
+├── dash_audi_store.lua  # Audi history, separate from the inbox
 ├── dash_power.lua       # keep-awake
 ├── dash_time.lua        # Eastern time and month layouts
 ├── dash_usage.lua       # AI usage tiles: labels, staleness
 ├── dash_battery.lua     # battery drain history and rate
 ├── dash_dashboard.lua     # fullscreen widget
 ├── dash_message_view.lua  # fullscreen message reader
+├── dash_audi_view.lua     # Audi header and scrolling body
 ├── dash_markdown.lua      # Markdown to HTML, and previews
 └── dash_weather.lua       # weather URL, parsing and labels
 ```
@@ -321,7 +373,9 @@ Everything lives under `koreader/settings/`, so it comes back after a restart.
 |---|---|
 | `dash_data.json` | The state blob and the message index, including previews |
 | `dash_messages/<n>.md` | One file per message body, named by sequence number |
-| `dash_config.json` | The access token |
+| `dash_audi.json` | The Audi history index, the current entry and the next `ref` |
+| `dash_audi_bodies/<n>.md` | One file per Audi body, named by sequence number |
+| `dash_config.json` | The access token. Optional `audi_history_limit` overrides 20 |
 | `dash_restart_request` | Created by `scripts/deploy.sh`; the plugin restarts KOReader and deletes it |
 | `dash_open_request` | Opens Dash on the next start, then is deleted. Created by `scripts/deploy.sh`, and by a restart made while Dash is open |
 
