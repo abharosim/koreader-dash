@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs the launchd job that sends ~/kdash-outbox/*.md to the Kindle inbox every minute.
+# Installs the launchd job that sends ~/kdash-outbox/*.md to the inbox and ~/kdash-audi/*.md to Audi.
 # Log: ~/Library/Logs/koreader-dash-outbox.log
 #   scripts/install-outbox.sh             install (or reinstall) and run once now
 #   scripts/install-outbox.sh --uninstall stop it and remove the job (the outbox folder is kept)
@@ -15,10 +15,12 @@ if [ "${1:-}" = "--uninstall" ]; then
     echo "Removed $LABEL"
     exit 0
 fi
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs" "$HOME/kdash-outbox/sent" "$HOME/kdash-outbox/failed"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs" \
+    "$HOME/kdash-outbox/sent" "$HOME/kdash-outbox/failed" \
+    "$HOME/kdash-audi/sent" "$HOME/kdash-audi/failed"
 sed -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" "scripts/launchd/$LABEL.plist" > "$PLIST"
 plutil -lint "$PLIST" >/dev/null
 launchctl bootstrap "$DOMAIN" "$PLIST"
 launchctl kickstart "$DOMAIN/$LABEL"
-echo "Installed $LABEL: runs at login, every minute, and when ~/kdash-outbox changes"
+echo "Installed $LABEL: runs at login, every minute, and when ~/kdash-outbox or ~/kdash-audi changes"
 echo "Log: $HOME/Library/Logs/koreader-dash-outbox.log"

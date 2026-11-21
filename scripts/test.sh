@@ -16,4 +16,5 @@ status=0
 for spec in plugin/__tests__/*_spec.lua; do
     luajit "$spec" || status=1
 done
+sh scripts/test-audi-push.sh || status=1
 exit "$status"

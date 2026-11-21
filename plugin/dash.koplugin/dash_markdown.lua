@@ -5,6 +5,25 @@
 
 local Markdown = {}
 
+-- Shared by the inbox reader and Audi view. Raw HTML never reaches this stylesheet:
+-- toHtml escapes the source first, and only Markdown syntax becomes tags.
+Markdown.CSS = [[
+body { margin: 0; line-height: 1.35; }
+h1 { font-size: 1.45em; margin: 0.6em 0 0.3em 0; }
+h2 { font-size: 1.25em; margin: 0.6em 0 0.3em 0; }
+h3, h4, h5, h6 { font-size: 1.1em; margin: 0.5em 0 0.2em 0; }
+p { margin: 0 0 0.6em 0; }
+ul, ol { margin: 0 0 0.6em 0; padding-left: 1.4em; }
+li { margin: 0.1em 0; }
+blockquote { margin: 0.4em 0 0.6em 0; padding-left: 0.8em; border-left: 3px solid black; }
+pre { margin: 0.4em 0 0.8em 0; padding: 0.4em; border: 1px solid #888; white-space: pre-wrap; font-size: 0.85em; }
+code { font-family: monospace; font-size: 0.9em; }
+table { border-collapse: collapse; margin: 0.4em 0 0.8em 0; }
+th, td { border: 1px solid black; padding: 0.15em 0.4em; }
+th { font-weight: bold; }
+hr { border: 0; border-top: 1px solid black; margin: 0.8em 0; }
+]]
+
 local function escape(text)
     return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
 end

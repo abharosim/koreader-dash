@@ -16,23 +16,6 @@ local _ = require("gettext")
 local Markdown = require("dash_markdown")
 local Screen = Device.screen
 
-local CSS = [[
-body { margin: 0; line-height: 1.35; }
-h1 { font-size: 1.45em; margin: 0.6em 0 0.3em 0; }
-h2 { font-size: 1.25em; margin: 0.6em 0 0.3em 0; }
-h3, h4, h5, h6 { font-size: 1.1em; margin: 0.5em 0 0.2em 0; }
-p { margin: 0 0 0.6em 0; }
-ul, ol { margin: 0 0 0.6em 0; padding-left: 1.4em; }
-li { margin: 0.1em 0; }
-blockquote { margin: 0.4em 0 0.6em 0; padding-left: 0.8em; border-left: 3px solid black; }
-pre { margin: 0.4em 0 0.8em 0; padding: 0.4em; border: 1px solid #888; white-space: pre-wrap; font-size: 0.85em; }
-code { font-family: monospace; font-size: 0.9em; }
-table { border-collapse: collapse; margin: 0.4em 0 0.8em 0; }
-th, td { border: 1px solid black; padding: 0.15em 0.4em; }
-th { font-weight: bold; }
-hr { border: 0; border-top: 1px solid black; margin: 0.8em 0; }
-]]
-
 local MessageView = InputContainer:extend{
     covers_fullscreen = true,
     message = nil,      -- the message's index entry
@@ -90,7 +73,7 @@ function MessageView:init()
             margin = 0,
             ScrollHtmlWidget:new{
                 html_body = Markdown.toHtml(body_text),
-                css = CSS,
+                css = Markdown.CSS,
                 default_font_size = Screen:scaleBySize(20),
                 width = width - margin * 2,
                 height = body_height,
@@ -115,6 +98,9 @@ end
 
 function MessageView:close()
     UIManager:close(self)
+    if self.on_closed then
+        self.on_closed()
+    end
 end
 
 function MessageView:onShow()

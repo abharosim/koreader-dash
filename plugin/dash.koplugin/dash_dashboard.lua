@@ -22,6 +22,7 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local _ = require("gettext")
+local AudiView = require("dash_audi_view")
 local DashTime = require("dash_time")
 local MessageView = require("dash_message_view")
 local Usage = require("dash_usage")
@@ -196,15 +197,18 @@ end
 local Dashboard = InputContainer:extend{
     covers_fullscreen = true,
     store = nil,      -- dash_store instance
+    audi = nil,       -- dash_audi_store instance; separate from the inbox
     get_status = nil, -- function returning the diagnostics text
     get_drain = nil,  -- function returning the battery tile's headline and detail
     on_minute = nil,  -- function called on each minute boundary
     on_close = nil,   -- function called when the user taps Exit
-    locked = false,   -- while locked, only the Lock button responds; holding it toggles the lock
+    locked = false,   -- while locked, only Lock responds, plus scrolling the open Audi entry
     on_lock_change = nil, -- function called with the new lock state
+    mode = "dash",    -- "dash" or "audi"
 }
 
 function Dashboard:init()
+    self.mode = self.mode or "dash"
     self.minutes_since_full_refresh = 0
     self.page = 1
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
@@ -472,9 +476,57 @@ function Dashboard:buildInbox(width, available_height)
     return inbox
 end
 
-function Dashboard:build()
-    local width, height = self.dimen.w, self.dimen.h
-    local margin = Screen:scaleBySize(16)
+function Dashboard:buildBar(width, height, margin)
+    local function barButton(text, callback, hold_callback, selected)
+        return Button:new{
+            text = text,
+            text_font_size = 20,
+            width = math.floor(width * 0.15),
+            padding_v = Screen:scaleBySize(6),
+            preselect = selected or nil,
+            show_parent = self,
+            callback = callback,
+            hold_callback = hold_callback,
+        }
+    end
+    local unseen = self.audi and self.audi.unseen or 0
+    local audi_label = _("Audi")
+    if self.mode ~= "audi" and unseen > 0 then
+        audi_label = string.format("%s·%d", audi_label, unseen)
+    end
+    local audi_button = barButton(audi_label, function() self:toggleAudi() end, nil, self.mode == "audi")
+    local exit_button = barButton(_("Exit"), function()
+        if self.locked then
+            return
+        end
+        if self.on_close then
+            self.on_close()
+        end
+    end)
+    local lock_button = barButton(self.locked and _("Locked") or _("Lock"), function()
+        self:showLockHint(self.locked and _("Locked. Hold to unlock.") or _("Hold to lock."))
+    end, function() self:setLocked(not self.locked) end)
+    self.audi_button, self.exit_button, self.lock_button = audi_button, exit_button, lock_button
+
+    local exit_size = exit_button:getSize()
+    local button_gap = Screen:scaleBySize(8)
+    local bar_y = height - exit_size.h - margin
+    local slots = 3
+    exit_button.overlap_offset = { width - exit_size.w - margin, bar_y }
+    lock_button.overlap_offset = { width - exit_size.w * 2 - margin - button_gap, bar_y }
+    audi_button.overlap_offset = { width - exit_size.w * slots - margin - button_gap * 2, bar_y }
+
+    self.status_widget = TextBoxWidget:new{
+        text = self.get_status(),
+        face = Font:getFace("infofont", 16),
+        width = math.max(1, width - exit_size.w * slots - button_gap * (slots - 1) - margin * 3),
+        height = exit_size.h,
+    }
+    self.status_widget.overlap_offset = { margin, height - exit_size.h - margin }
+    return exit_size
+end
+
+function Dashboard:buildDashMain(width, height, margin, bar_height)
     local content_width = width - margin * 2
     local now = DashTime.fields()
     self.shown_day = now.day
@@ -514,44 +566,10 @@ function Dashboard:build()
         calendar,
     }
 
-    local function barButton(text, callback, hold_callback)
-        return Button:new{
-            text = text,
-            text_font_size = 20,
-            width = math.floor(width * 0.15),
-            padding_v = Screen:scaleBySize(6),
-            show_parent = self,
-            callback = callback,
-            hold_callback = hold_callback,
-        }
-    end
-    local exit_button = barButton(_("Exit"), function()
-        if self.on_close then
-            self.on_close()
-        end
-    end)
-    local lock_button = barButton(self.locked and _("Locked") or _("Lock"), function()
-        self:showLockHint(self.locked and _("Locked. Hold to unlock.") or _("Hold to lock."))
-    end, function() self:setLocked(not self.locked) end)
-    self.exit_button, self.lock_button = exit_button, lock_button
-    local exit_size = exit_button:getSize()
-    local button_gap = Screen:scaleBySize(8)
-    local bar_y = height - exit_size.h - margin
-    exit_button.overlap_offset = { width - exit_size.w - margin, bar_y }
-    lock_button.overlap_offset = { width - exit_size.w * 2 - margin - button_gap, bar_y }
-
-    self.status_widget = TextBoxWidget:new{
-        text = self.get_status(),
-        face = Font:getFace("infofont", 16),
-        width = width - exit_size.w * 2 - button_gap - margin * 3,
-        height = exit_size.h,
-    }
-    self.status_widget.overlap_offset = { margin, height - exit_size.h - margin }
-
     local gap = Screen:scaleBySize(12)
     local usage = self:buildUsage(content_width)
     local top_height = margin + header:getSize().h + gap * 2 + 2 + usage:getSize().h + gap
-    local inbox_height = height - top_height - exit_size.h - margin - gap
+    local inbox_height = height - top_height - bar_height - margin - gap
 
     local main = VerticalGroup:new{
         align = "left",
@@ -565,6 +583,60 @@ function Dashboard:build()
         self:buildInbox(content_width, inbox_height),
     }
     main.overlap_offset = { margin, 0 }
+    return main
+end
+
+function Dashboard:syncAudiIndex()
+    self.audi_index = nil
+    if not self.audi or not self.audi.current_id then
+        return
+    end
+    for index, entry in ipairs(self.audi.entries) do
+        if entry.id == self.audi.current_id then
+            self.audi_index = index
+            return
+        end
+    end
+end
+
+function Dashboard:buildAudiMain(width, height, margin, bar_height)
+    self:syncAudiIndex()
+    local content_width = width - margin * 2
+    local available = height - bar_height - margin * 2
+    local entry = self.audi and self.audi_index and self.audi.entries[self.audi_index]
+    local time_text = nil
+    if entry then
+        time_text = messageTime({ received_at = entry.display_at or entry.received_at })
+    end
+    local view = AudiView.build{
+        width = content_width,
+        height = available,
+        entry = entry,
+        body = entry and self.audi:getBody(entry) or nil,
+        index = self.audi_index,
+        total = self.audi and #self.audi.entries or 0,
+        time_text = time_text,
+        show_parent = self,
+        on_page = function(delta) self:pageAudi(delta) end,
+    }
+    self.audi_scroll = view.scroll
+    self.audi_prev = view.prev
+    self.audi_next = view.next
+    view.widget.overlap_offset = { margin, margin }
+    return view.widget
+end
+
+function Dashboard:build()
+    local width, height = self.dimen.w, self.dimen.h
+    local margin = Screen:scaleBySize(16)
+    self.audi_scroll, self.audi_prev, self.audi_next = nil, nil, nil
+    local exit_size = self:buildBar(width, height, margin)
+    local main
+    if self.mode == "audi" then
+        main = self:buildAudiMain(width, height, margin, exit_size.h)
+    else
+        main = self:buildDashMain(width, height, margin, exit_size.h)
+    end
 
     -- The opaque background is what hides the screens underneath.
     self[1] = FrameContainer:new{
@@ -577,8 +649,9 @@ function Dashboard:build()
             allow_mirroring = false,
             main,
             self.status_widget,
-            lock_button,
-            exit_button,
+            self.audi_button,
+            self.lock_button,
+            self.exit_button,
         },
     }
 end
@@ -611,15 +684,62 @@ function Dashboard:setLocked(locked)
     self:scheduleRebuild(0.05)
 end
 
--- While locked, the Lock button is the only thing that responds to touch.
+-- While locked, only the Lock button responds, except scrolling the Audi entry on screen.
+-- History paging, leaving Audi and Exit stay blocked.
 function Dashboard:handleEvent(event)
     if self.locked and event.handler == "onGesture" then
+        if self.mode == "audi" and self.audi_scroll and self.audi_scroll.handleEvent then
+            self.audi_scroll:handleEvent(event)
+        end
         if self.lock_button then
             self.lock_button:handleEvent(event)
         end
         return true
     end
     return InputContainer.handleEvent(self, event)
+end
+
+function Dashboard:closeReader()
+    local view = self.message_view
+    if not view then
+        return
+    end
+    self.message_view = nil
+    UIManager:close(view)
+end
+
+function Dashboard:showAudi(refresh)
+    self:closeReader()
+    self.mode = "audi"
+    if self.audi then
+        self.audi:markShown()
+    end
+    self:rebuild(refresh or "full")
+end
+
+function Dashboard:toggleAudi()
+    if self.locked then
+        return
+    end
+    if self.mode == "audi" then
+        self.mode = "dash"
+        self:rebuild("full")
+    else
+        self:showAudi("full")
+    end
+end
+
+function Dashboard:pageAudi(delta)
+    if self.locked or self.mode ~= "audi" or not self.audi or not self.audi_index then
+        return
+    end
+    local next_index = self.audi_index + delta
+    local entry = self.audi.entries[next_index]
+    if not entry then
+        return
+    end
+    self.audi:setCurrent(entry.id)
+    self:rebuild("partial")
 end
 
 function Dashboard:confirmReadAll()
@@ -646,18 +766,39 @@ function Dashboard:openMessage(message)
     if source then
         subtitle = source .. "  ·  " .. subtitle
     end
-    UIManager:show(MessageView:new{
+    local view
+    view = MessageView:new{
         message = message,
         body = self.store:getBody(message),
         subtitle = subtitle,
         on_mark_read = function(read_message) self:markRead(read_message) end,
-    })
+        on_closed = function()
+            if self.message_view == view then
+                self.message_view = nil
+            end
+        end,
+    }
+    self.message_view = view
+    UIManager:show(view)
 end
 
 function Dashboard:refresh()
     -- Runs first, so readings it records show up in this refresh.
     if self.on_minute then
         self.on_minute()
+    end
+    if self.mode == "audi" then
+        if self.status_widget then
+            self.status_widget:setText(self.get_status())
+        end
+        self.minutes_since_full_refresh = self.minutes_since_full_refresh + 1
+        if self.minutes_since_full_refresh >= FULL_REFRESH_EVERY_MINUTES then
+            self.minutes_since_full_refresh = 0
+            UIManager:setDirty(self, "full")
+        else
+            UIManager:setDirty(self, "ui")
+        end
+        return
     end
     local needs_rebuild = DashTime.fields().day ~= self.shown_day
         or self:weatherExpired() ~= self.shown_weather_expired

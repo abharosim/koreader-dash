@@ -88,14 +88,61 @@ local function summary(message)
     }
 end
 
+local AUDI_STRING_LIMITS = { title = 300, body = 256 * 1024, source = 64, created_at = 64 }
+
+local function validateAudi(body)
+    if body.action ~= nil and body.action ~= "clear" then
+        return "action must be clear"
+    end
+    if body.action == "clear" then
+        return nil
+    end
+    for field, limit in pairs(AUDI_STRING_LIMITS) do
+        local value = body[field]
+        if value ~= nil then
+            if type(value) ~= "string" then
+                return field .. " must be a string"
+            end
+            if #value > limit then
+                return string.format("%s is over %d bytes", field, limit)
+            end
+        end
+    end
+    if body.id ~= nil and not validId(body.id) then
+        return "id must be 1 to 64 letters, digits or . _ : -"
+    end
+    if body.replace_id ~= nil and not validId(body.replace_id) then
+        return "replace_id must be 1 to 64 letters, digits or . _ : -"
+    end
+    if body.ref ~= nil then
+        if type(body.ref) ~= "number" or body.ref < 1 or body.ref ~= math.floor(body.ref) or body.ref >= 1e15 then
+            return "ref must be a positive integer"
+        end
+    end
+    return nil
+end
+
+local function audiSummary(entry)
+    return {
+        id = entry.id,
+        ref = entry.ref,
+        title = entry.title,
+        source = entry.source,
+        created_at = entry.created_at,
+        received_at = entry.received_at,
+        preview = entry.preview,
+    }
+end
+
 local Api = {}
 Api.__index = Api
 
 -- opts: store, token, now (optional), info (optional function returning health fields),
---       on_ping (optional callback)
+--       audi (optional Audi store), on_ping (optional callback)
 function Api.new(opts)
     return setmetatable({
         store = opts.store,
+        audi = opts.audi,
         token = opts.token,
         now = opts.now or os.time,
         info = opts.info,
@@ -124,6 +171,10 @@ function Api:_health()
     fields.ok = true
     fields.time = self.now()
     fields.unread = self.store:unreadCount()
+    if self.audi then
+        local ref = self.audi:currentRef()
+        fields.audi_current_ref = ref == nil and json.util.null or ref
+    end
     return reply(200, fields)
 end
 
@@ -195,6 +246,67 @@ local function methodNotAllowed()
     return fail(405, "method_not_allowed", "That method isn't supported here")
 end
 
+local function audiMissing()
+    return fail(500, "storage_error", "Audi store isn't available")
+end
+
+function Api:_postAudi(request)
+    if not self.audi then
+        return audiMissing()
+    end
+    local audi = self.audi
+    local fields, status, body = readObject(request)
+    if not fields then
+        return status, body
+    end
+    local problem = validateAudi(fields)
+    if problem then
+        return fail(400, "bad_field", problem)
+    end
+    local entry, meta = audi:submit(fields)
+    if meta == "storage_error" then
+        return fail(500, "storage_error", "Couldn't save the entry")
+    end
+    if meta.cleared then
+        return reply(200, { cleared = true })
+    end
+    return reply(meta.created and 201 or 200, {
+        id = entry.id,
+        ref = entry.ref,
+        created = meta.created,
+        updated = meta.updated,
+    })
+end
+
+function Api:_listAudi()
+    if not self.audi then
+        return audiMissing()
+    end
+    local audi = self.audi
+    local list = {}
+    for _, entry in ipairs(audi.entries) do
+        table.insert(list, audiSummary(entry))
+    end
+    if #list == 0 then
+        return 200, '{"entries":[]}'
+    end
+    return reply(200, { entries = list })
+end
+
+function Api:_getAudi(id)
+    if not self.audi then
+        return audiMissing()
+    end
+    local audi = self.audi
+    local entry = audi:get(id)
+    if not entry then
+        return fail(404, "not_found", "No such entry")
+    end
+    local full = audiSummary(entry)
+    full.body = audi:getBody(entry)
+    return reply(200, full)
+end
+
 function Api:_route(request)
     local method, path = request.method, request.path
     local is_change = method ~= "GET"
@@ -215,6 +327,37 @@ function Api:_route(request)
     if path == "/v1/inbox" then
         if method == "GET" then return self:_listMessages(request) end
         if method == "POST" then return self:_postMessage(request) end
+        return methodNotAllowed()
+    end
+
+    if path == "/v1/audi" then
+        if method == "GET" then return self:_listAudi() end
+        if method == "POST" then return self:_postAudi(request) end
+        return methodNotAllowed()
+    end
+    if path == "/v1/audi/clear" then
+        if method ~= "POST" then return methodNotAllowed() end
+        if not self.audi then
+            return audiMissing()
+        end
+        self.audi:clear()
+        return reply(200, { cleared = true })
+    end
+    local audi_id = path:match("^/v1/audi/([^/]+)$")
+    if audi_id then
+        if not validId(audi_id) then
+            return fail(400, "bad_id", "Invalid entry id")
+        end
+        if method == "GET" then
+            return self:_getAudi(audi_id)
+        end
+        if method == "DELETE" then
+            if not self.audi then
+                return audiMissing()
+            end
+            self.audi:delete(audi_id)
+            return 204, ""
+        end
         return methodNotAllowed()
     end
 
