@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")/.."
 HOST="${KINDLE_HOST:-root@192.168.1.152}"
 PORT="${KINDLE_PORT:-2222}"
-KEY="${KINDLE_KEY:-$HOME/.ssh/id_ed25519}"
+KEY="${KINDLE_KEY:-$HOME/.ssh/mac_mini_anasim}"
 PLUGINS=/mnt/us/koreader/plugins
 kindle() { ssh -i "$KEY" -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes "$HOST" "$@"; }
 
