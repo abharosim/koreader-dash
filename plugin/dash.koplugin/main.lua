@@ -16,6 +16,8 @@ local _ = require("gettext")
 
 local DashTime = require("dash_time")
 local Api = require("dash_api")
+local AudiFont = require("dash_audi_font")
+local AudiIdle = require("dash_audi_idle")
 local AudiStore = require("dash_audi_store")
 local Battery = require("dash_battery")
 local Dashboard = require("dash_dashboard")
@@ -39,6 +41,8 @@ local LOW_BATTERY_PERCENT = 20
 local REPLACES_SLEEP_SETTING = "dash_replaces_sleep"
 -- nil means on, so a new install opens Audi when an entry arrives.
 local AUDI_AUTO_SETTING = "dash_audi_auto_switch"
+-- Body size for Audi. Missing means AudiFont.DEFAULT (18). Saved with the other Dash settings.
+local AUDI_FONT_SETTING = "dash_audi_font_size"
 local FIREWALL_RULES = {
     "INPUT -p tcp --dport %d -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT",
     "OUTPUT -p tcp --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT",
@@ -190,6 +194,28 @@ local function audiAutoSwitch()
     return G_reader_settings:nilOrTrue(AUDI_AUTO_SETTING)
 end
 
+local function audiFontSize()
+    local saved = G_reader_settings:readSetting(AUDI_FONT_SETTING)
+    if saved == nil then
+        return AudiFont.DEFAULT
+    end
+    return AudiFont.clamp(saved)
+end
+
+local function setAudiFontSize(size)
+    G_reader_settings:saveSetting(AUDI_FONT_SETTING, AudiFont.clamp(size))
+end
+
+-- dash_config.json may set audi_idle_seconds. Missing or invalid keeps 10 minutes.
+local function audiIdleTimeout()
+    local config = readConfig()
+    local value = config and tonumber(config.audi_idle_seconds)
+    if value and value >= 1 and value == math.floor(value) and value <= 24 * 3600 then
+        return value
+    end
+    return AudiIdle.TIMEOUT_SECONDS
+end
+
 -- dash_config.json may set audi_history_limit. Missing or invalid keeps the store default.
 local function audiHistoryLimit()
     local config = readConfig()
@@ -247,9 +273,8 @@ local function onAudiChange(info)
         return
     end
     if info.kind == "deleted" then
-        if dash.mode == "audi" then
-            dash:showAudi("partial")
-        end
+        -- The home list and the Audi pager both drop the row. Don't mark another entry read.
+        dash:rebuild("partial")
         return
     end
     if not info.show then
@@ -444,6 +469,9 @@ local function openDashboard()
         audi = Runtime.audi,
         get_status = statusText,
         get_drain = drainText,
+        get_audi_font = audiFontSize,
+        set_audi_font = setAudiFontSize,
+        get_audi_idle_timeout = audiIdleTimeout,
         on_minute = function()
             recordBattery()
             logEvent("tick")
@@ -587,9 +615,12 @@ function Dash:onResume()
         recordBattery()
         startServer()
         Runtime.dashboard:startClock()
+        -- If Audi sat through suspend for the whole idle window, go home first.
+        -- A delivery that arrived while asleep still opens Audi after that.
+        local idle_home = Runtime.dashboard:resumeAudiIdle()
         if Runtime.audi and Runtime.audi.pending_show and audiAutoSwitch() then
             Runtime.dashboard:showAudi("full")
-        else
+        elseif not idle_home then
             UIManager:setDirty(Runtime.dashboard, "full")
         end
         logEvent("resume")

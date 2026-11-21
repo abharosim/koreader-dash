@@ -22,8 +22,11 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local _ = require("gettext")
+local AudiFont = require("dash_audi_font")
+local AudiIdle = require("dash_audi_idle")
 local AudiView = require("dash_audi_view")
 local DashTime = require("dash_time")
+local Inbox = require("dash_inbox")
 local MessageView = require("dash_message_view")
 local Usage = require("dash_usage")
 local Screen = Device.screen
@@ -114,11 +117,22 @@ local function buildCalendar(now, cell)
     return rows
 end
 
--- One inbox line. A tap opens the message; the Read button is handled first by its own widget.
+-- A tap, swipe, key or page turn while Audi is showing. Anything else must not reset the idle timer.
+local AUDI_INPUT = {
+    onGesture = true,
+    onKeyPress = true,
+    onKeyRepeat = true,
+    onKeyRelease = true,
+    onForward = true,
+    onBackward = true,
+}
+
+-- One inbox line. A briefing has a Read button; an Audi row has an Audi tag and its ref.
+-- A tap opens the item. The Read button is handled first by its own widget.
 local InboxRow = InputContainer:extend{
     width = nil,
     height = nil,
-    message = nil,
+    item = nil,
     on_open = nil,
     on_read = nil,
     show_parent = nil,
@@ -132,19 +146,27 @@ function InboxRow:init()
             range = function() return self.dimen end,
         },
     }
+    if self.item.kind == "audi" then
+        self:initAudi()
+    else
+        self:initBriefing()
+    end
+end
 
+function InboxRow:initBriefing()
+    local message = self.item.message
     local read_button = Button:new{
         text = _("Read"),
         text_font_size = 20,
         width = math.floor(self.width * 0.17),
         show_parent = self.show_parent,
-        callback = function() self.on_read(self.message) end,
+        callback = function() self.on_read(message) end,
     }
     local text_width = self.width - read_button:getSize().w - Screen:scaleBySize(8)
-    local is_high = self.message.priority == "high"
+    local is_high = message.priority == "high"
 
-    local meta = messageTime(self.message)
-    local source = displayValue(self.message.source)
+    local meta = messageTime(message)
+    local source = displayValue(message.source)
     if source then
         meta = source .. "  ·  " .. meta
     end
@@ -155,13 +177,13 @@ function InboxRow:init()
     local lines = VerticalGroup:new{
         align = "left",
         TextWidget:new{
-            text = displayValue(self.message.title) or "",
+            text = displayValue(message.title) or "",
             face = Font:getFace("infofont", 21),
             bold = is_high,
             max_width = text_width,
         },
     }
-    local preview = displayValue(self.message.preview)
+    local preview = displayValue(message.preview)
     if preview then
         local preview_face = Font:getFace("infofont", 16)
         table.insert(lines, TextBoxWidget:new{
@@ -189,17 +211,90 @@ function InboxRow:init()
     }
 end
 
+function InboxRow:initAudi()
+    local entry = self.item.entry
+    local tag_width = math.floor(self.width * 0.17)
+    local text_width = self.width - tag_width - Screen:scaleBySize(8)
+    local meta = messageTime({ received_at = entry.display_at or entry.received_at })
+    local source = displayValue(entry.source)
+    if source then
+        meta = source .. "  ·  " .. meta
+    end
+
+    local lines = VerticalGroup:new{ align = "left" }
+    if self.item.unread then
+        -- A dot plus 待看, so an unread Audi row is not mistaken for a briefing.
+        table.insert(lines, TextWidget:new{
+            text = "● 待看",
+            face = Font:getFace("infofont", 14),
+            bold = true,
+            max_width = text_width,
+        })
+    end
+    table.insert(lines, TextWidget:new{
+        text = displayValue(entry.title) or "",
+        face = Font:getFace("infofont", 21),
+        bold = self.item.unread,
+        max_width = text_width,
+    })
+    local preview = displayValue(entry.preview)
+    if preview then
+        local preview_face = Font:getFace("infofont", 16)
+        table.insert(lines, TextBoxWidget:new{
+            text = preview,
+            face = preview_face,
+            width = text_width,
+            height = 2 * math.ceil(preview_face.size * 1.3),
+            height_adjust = true,
+            height_overflow_show_ellipsis = true,
+        })
+    end
+    table.insert(lines, TextWidget:new{
+        text = meta,
+        face = Font:getFace("infofont", 14),
+        max_width = text_width,
+    })
+
+    local tag = VerticalGroup:new{
+        align = "center",
+        TextWidget:new{
+            text = "Audi",
+            face = Font:getFace("infofont", 16),
+            bold = true,
+        },
+        TextWidget:new{
+            text = "#" .. tostring(entry.ref),
+            face = Font:getFace("infofont", 16),
+            bold = true,
+        },
+    }
+    self[1] = HorizontalGroup:new{
+        LeftContainer:new{
+            dimen = Geom:new{ w = text_width, h = self.height },
+            lines,
+        },
+        HorizontalSpan:new{ width = Screen:scaleBySize(8) },
+        CenterContainer:new{
+            dimen = Geom:new{ w = tag_width, h = self.height },
+            tag,
+        },
+    }
+end
+
 function InboxRow:onTapRow()
-    self.on_open(self.message)
+    self.on_open(self.item)
     return true
 end
 
 local Dashboard = InputContainer:extend{
     covers_fullscreen = true,
     store = nil,      -- dash_store instance
-    audi = nil,       -- dash_audi_store instance; separate from the inbox
+    audi = nil,       -- dash_audi_store instance; listed on the home inbox, stored apart
     get_status = nil, -- function returning the diagnostics text
     get_drain = nil,  -- function returning the battery tile's headline and detail
+    get_audi_font = nil, -- function returning the saved Audi body size
+    set_audi_font = nil, -- function(size) persisting that size
+    get_audi_idle_timeout = nil, -- function returning seconds, or nil for the default
     on_minute = nil,  -- function called on each minute boundary
     on_close = nil,   -- function called when the user taps Exit
     locked = false,   -- while locked, only Lock responds, plus scrolling the open Audi entry
@@ -412,17 +507,24 @@ function Dashboard:buildPager(page_count)
     }
 end
 
+function Dashboard:inboxItems()
+    return Inbox.merge(self.store.messages, self.audi and self.audi.entries or nil)
+end
+
 function Dashboard:buildInbox(width, available_height)
-    local unread = self.store:unreadMessages()
+    local items = self:inboxItems()
+    local unread = Inbox.unreadCount(items)
+    -- Read all only marks briefings. Audi rows stay until they are shown, or a clear hides them.
+    local briefing_unread = self.store:unreadCount()
     local row_height = math.floor(self.dimen.h * 0.12)
     local title_height = Screen:scaleBySize(36)
     local per_page = math.max(1, math.floor((available_height - title_height) / (row_height + 1)))
-    local page_count = math.max(1, math.ceil(#unread / per_page))
+    local page_count = math.max(1, math.ceil(#items / per_page))
     self.page = math.max(1, math.min(self.page, page_count))
 
-    local title = #unread > 0 and string.format(_("Inbox (%d unread)"), #unread) or _("Inbox")
+    local title = unread > 0 and string.format(_("Inbox (%d unread)"), unread) or _("Inbox")
     local controls = HorizontalGroup:new{ align = "center" }
-    if #unread > 0 then
+    if briefing_unread > 0 then
         self.read_all_button = Button:new{
             text = _("Read all"),
             text_font_size = 18,
@@ -449,7 +551,7 @@ function Dashboard:buildInbox(width, available_height)
         },
     }
 
-    if #unread == 0 then
+    if #items == 0 then
         table.insert(inbox, VerticalSpan:new{ width = Screen:scaleBySize(12) })
         table.insert(inbox, TextWidget:new{
             text = _("No new messages"),
@@ -459,7 +561,8 @@ function Dashboard:buildInbox(width, available_height)
     end
 
     local first = (self.page - 1) * per_page + 1
-    for index = first, math.min(first + per_page - 1, #unread) do
+    for index = first, math.min(first + per_page - 1, #items) do
+        local item = items[index]
         table.insert(inbox, LineWidget:new{
             background = Blitbuffer.COLOR_LIGHT_GRAY,
             dimen = Geom:new{ w = width, h = 1 },
@@ -467,9 +570,9 @@ function Dashboard:buildInbox(width, available_height)
         table.insert(inbox, InboxRow:new{
             width = width,
             height = row_height,
-            message = unread[index],
+            item = item,
             show_parent = self,
-            on_open = function(message) self:openMessage(message) end,
+            on_open = function(opened) self:openInboxItem(opened) end,
             on_read = function(message) self:markRead(message) end,
         })
     end
@@ -599,10 +702,40 @@ function Dashboard:syncAudiIndex()
     end
 end
 
+function Dashboard:audiFontSize()
+    if self.get_audi_font then
+        return AudiFont.clamp(self.get_audi_font())
+    end
+    return AudiFont.DEFAULT
+end
+
+function Dashboard:audiIdleTimeout()
+    if type(self.audi_idle_timeout) == "number" and self.audi_idle_timeout >= 1 then
+        return self.audi_idle_timeout
+    end
+    if self.get_audi_idle_timeout then
+        local value = self.get_audi_idle_timeout()
+        if type(value) == "number" and value >= 1 then
+            return value
+        end
+    end
+    return AudiIdle.TIMEOUT_SECONDS
+end
+
+function Dashboard:now()
+    if type(self.clock) == "function" then
+        return self.clock()
+    end
+    return os.time()
+end
+
 function Dashboard:buildAudiMain(width, height, margin, bar_height)
     self:syncAudiIndex()
-    local content_width = width - margin * 2
-    local available = height - bar_height - margin * 2
+    -- Audi's own margin, about half the dashboard page margin. The bottom bar stays put.
+    local content_margin = Screen:scaleBySize(AudiView.PAGE_MARGIN)
+    self.audi_content_margin = content_margin
+    local content_width = width - content_margin * 2
+    local available = height - bar_height - margin - content_margin
     local entry = self.audi and self.audi_index and self.audi.entries[self.audi_index]
     local time_text = nil
     if entry then
@@ -616,13 +749,17 @@ function Dashboard:buildAudiMain(width, height, margin, bar_height)
         index = self.audi_index,
         total = self.audi and #self.audi.entries or 0,
         time_text = time_text,
+        font_size = self:audiFontSize(),
         show_parent = self,
         on_page = function(delta) self:pageAudi(delta) end,
+        on_font = function(delta) self:adjustAudiFont(delta) end,
     }
     self.audi_scroll = view.scroll
     self.audi_prev = view.prev
     self.audi_next = view.next
-    view.widget.overlap_offset = { margin, margin }
+    self.audi_font_smaller = view.font_smaller
+    self.audi_font_larger = view.font_larger
+    view.widget.overlap_offset = { content_margin, content_margin }
     return view.widget
 end
 
@@ -630,6 +767,8 @@ function Dashboard:build()
     local width, height = self.dimen.w, self.dimen.h
     local margin = Screen:scaleBySize(16)
     self.audi_scroll, self.audi_prev, self.audi_next = nil, nil, nil
+    self.audi_font_smaller, self.audi_font_larger = nil, nil
+    self.audi_content_margin = nil
     local exit_size = self:buildBar(width, height, margin)
     local main
     if self.mode == "audi" then
@@ -685,8 +824,11 @@ function Dashboard:setLocked(locked)
 end
 
 -- While locked, only the Lock button responds, except scrolling the Audi entry on screen.
--- History paging, leaving Audi and Exit stay blocked.
+-- History paging, leaving Audi and Exit stay blocked. A gesture still counts as input.
 function Dashboard:handleEvent(event)
+    if self.mode == "audi" and event and AUDI_INPUT[event.handler] then
+        self:noteAudiInput()
+    end
     if self.locked and event.handler == "onGesture" then
         if self.mode == "audi" and self.audi_scroll and self.audi_scroll.handleEvent then
             self.audi_scroll:handleEvent(event)
@@ -712,8 +854,25 @@ function Dashboard:showAudi(refresh)
     self:closeReader()
     self.mode = "audi"
     if self.audi then
-        self.audi:markShown()
+        local entry = self.audi:current()
+        if entry then
+            self.audi:markDisplayed(entry.id)
+        else
+            self.audi:markShown()
+        end
     end
+    -- Opening Audi, or a new entry taking the screen, starts the idle window over.
+    self.audi_idle_at = self:now()
+    self:armAudiIdle()
+    self:rebuild(refresh or "full")
+end
+
+function Dashboard:leaveAudiHome(refresh)
+    self:cancelAudiIdle()
+    if self.mode ~= "audi" then
+        return
+    end
+    self.mode = "dash"
     self:rebuild(refresh or "full")
 end
 
@@ -722,8 +881,7 @@ function Dashboard:toggleAudi()
         return
     end
     if self.mode == "audi" then
-        self.mode = "dash"
-        self:rebuild("full")
+        self:leaveAudiHome("full")
     else
         self:showAudi("full")
     end
@@ -739,7 +897,91 @@ function Dashboard:pageAudi(delta)
         return
     end
     self.audi:setCurrent(entry.id)
+    self.audi:markDisplayed(entry.id)
+    self:noteAudiInput()
     self:rebuild("partial")
+end
+
+function Dashboard:adjustAudiFont(delta)
+    local next_size = AudiFont.adjust(self:audiFontSize(), delta)
+    if next_size == self:audiFontSize() then
+        return
+    end
+    if self.set_audi_font then
+        self.set_audi_font(next_size)
+    end
+    self:noteAudiInput()
+    if self.mode == "audi" then
+        self:rebuild("full")
+    end
+end
+
+function Dashboard:cancelAudiIdle()
+    if self.audi_idle_task then
+        UIManager:unschedule(self.audi_idle_task)
+    end
+end
+
+function Dashboard:armAudiIdle()
+    self:cancelAudiIdle()
+    if self.mode ~= "audi" then
+        return
+    end
+    if not self.audi_idle_task then
+        self.audi_idle_task = function()
+            self:onAudiIdleFired()
+        end
+    end
+    local left = AudiIdle.remaining(self.audi_idle_at, self:now(), self:audiIdleTimeout())
+    if left <= 0 then
+        self:onAudiIdleFired()
+        return
+    end
+    UIManager:scheduleIn(left, self.audi_idle_task)
+end
+
+-- Any input, or a newly shown entry (showAudi sets the timestamp, then this re-arms).
+function Dashboard:noteAudiInput()
+    if self.mode ~= "audi" then
+        return
+    end
+    self.audi_idle_at = self:now()
+    self:armAudiIdle()
+end
+
+-- The scheduled callback. A second run after we have already left does nothing.
+function Dashboard:onAudiIdleFired()
+    local action = AudiIdle.action(self.mode, self.audi_idle_at, self:now(), self:audiIdleTimeout())
+    if action == "leave" then
+        self:cancelAudiIdle()
+        self:leaveAudiHome("full")
+        return
+    end
+    if action == "cancel" then
+        self:cancelAudiIdle()
+        return
+    end
+    local left = AudiIdle.remaining(self.audi_idle_at, self:now(), self:audiIdleTimeout())
+    UIManager:unschedule(self.audi_idle_task)
+    UIManager:scheduleIn(math.max(left, 1), self.audi_idle_task)
+end
+
+-- Suspend stops the timer but keeps the timestamp, so resume can see the gap.
+function Dashboard:suspendAudiIdle()
+    self:cancelAudiIdle()
+end
+
+-- Returns true when Audi was left because the idle window had already passed.
+function Dashboard:resumeAudiIdle()
+    local action = AudiIdle.action(self.mode, self.audi_idle_at, self:now(), self:audiIdleTimeout())
+    if action == "leave" then
+        self:leaveAudiHome("full")
+        return true
+    end
+    if action == "rearm" then
+        self:armAudiIdle()
+    end
+    return false
 end
 
 function Dashboard:confirmReadAll()
@@ -758,6 +1000,25 @@ end
 function Dashboard:markRead(message)
     self.store:setRead(message.id, true)
     self:scheduleRebuild(0.05)
+end
+
+function Dashboard:openInboxItem(item)
+    if self.locked or not item then
+        return
+    end
+    if item.kind == "audi" then
+        self:openAudiEntry(item.entry)
+    else
+        self:openMessage(item.message)
+    end
+end
+
+function Dashboard:openAudiEntry(entry)
+    if self.locked or not entry or not self.audi then
+        return
+    end
+    self.audi:setCurrent(entry.id)
+    self:showAudi("full")
 end
 
 function Dashboard:openMessage(message)
@@ -833,6 +1094,7 @@ function Dashboard:stopClock()
     UIManager:unschedule(self.tick)
     UIManager:unschedule(self.rebuild_task)
     self.rebuild_scheduled = false
+    self:cancelAudiIdle()
 end
 
 function Dashboard:onShow()

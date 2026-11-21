@@ -68,6 +68,8 @@ G_reader_settings = {
         if reader_settings[key] == nil or reader_settings[key] == true then reader_settings[key] = false
         else reader_settings[key] = nil end
     end,
+    readSetting = function(_, key) return reader_settings[key] end,
+    saveSetting = function(_, key, value) reader_settings[key] = value end,
 }
 
 local connected = true
@@ -618,6 +620,23 @@ test("a new Audi entry auto-switches with a full refresh and is not in the inbox
     assert(not inbox:find("DeepSeek review", 1, true), inbox)
     assert(dash.audi_index == 1, "not showing the only entry")
     assert(findText(dash[1], "1/1"), "position missing")
+    assert(dash.audi_scroll.default_font_size == 18, "body font should default to 18, was 20")
+    assert(dash.audi_content_margin == 8, "audi margin should be 8, was 16")
+    assert(dash.audi:get("audi-test-12").read_at, "a displayed entry stays unread")
+    dash:toggleAudi()
+    assert(dash.mode == "dash", "didn't return home")
+    local row = findWidget(dash[1], function(widget)
+        return widget.item and widget.item.kind == "audi" and widget.item.id == "audi-test-12"
+    end)
+    assert(row, "Audi entry missing from the home inbox")
+    assert(findText(row, "Audi"), "Audi tag missing")
+    assert(findText(row, "#12"), "ref missing")
+    assert(findText(row, "DeepSeek review"), "title missing from the inbox")
+    assert(not findText(row, "● 待看"), "shown entry still has the unread mark")
+    local inbox_http = httpRequest("GET", "/v1/inbox", readToken())
+    assert(not inbox_http:find("DeepSeek review", 1, true), inbox_http)
+    dash:toggleAudi()
+    assert(dash.mode == "audi", "leave the screen in Audi for the next test")
 end)
 
 test("an open inbox reader closes when Audi auto-switches", function()
@@ -714,8 +733,157 @@ test("resume opens an unshown Audi entry when auto-switch is on", function()
     assert(dash.mode == "dash", "cleanup")
 end)
 
+local function audiRow(id)
+    return findWidget(dashboard()[1], function(widget)
+        return widget.item and widget.item.kind == "audi" and (id == nil or widget.item.id == id)
+    end)
+end
+
+local function briefingRow(id)
+    return findWidget(dashboard()[1], function(widget)
+        return widget.item and widget.item.kind == "briefing" and widget.item.id == id
+    end)
+end
+
+test("a briefing stays in the list and does not open fullscreen until tapped", function()
+    local dash = dashboard()
+    if dash.mode == "audi" then
+        dash:toggleAudi()
+    end
+    assert(dash.mode == "dash", "setup")
+    local shown_before = #shown
+    local response = httpRequest("POST", "/v1/inbox", readToken(),
+        '{"id":"briefing-1","title":"Morning briefing","source":"dada","type":"briefing.daily","body":"Today"}')
+    assert(response:find("201 Created", 1, true), response)
+    runScheduled()
+    assert(dash.mode == "dash", "a briefing auto-opened Audi")
+    assert(#shown == shown_before, "a briefing auto-opened the reader")
+    local row = briefingRow("briefing-1")
+    assert(row, "briefing missing from the inbox")
+    assert(findText(row, "Read"), "briefing has no Read button")
+    row:onTapRow()
+    local view = lastShown()
+    assert(view ~= dash and view.message and view.message.id == "briefing-1", "tap didn't open the reader")
+    assert(dash.mode == "dash", "tap switched to Audi")
+    view:close()
+    dash:markRead(dash.store:getMessage("briefing-1"))
+    runScheduled()
+end)
+
+test("an unshown Audi entry is tagged in the inbox and opens fullscreen when tapped", function()
+    local dash = dashboard()
+    assert(dash.mode == "dash", "setup")
+    reader_settings.dash_audi_auto_switch = false
+    httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"audi-inbox","ref":3,"title":"Inbox note","source":"DeepSeek","body":"Waiting"}')
+    runScheduled()
+    assert(dash.mode == "dash", "auto-switch off still left the list")
+    local row = audiRow("audi-inbox")
+    assert(row, "row missing")
+    assert(findText(row, "Audi"), "tag")
+    assert(findText(row, "#3"), "ref")
+    assert(findText(row, "● 待看"), "unread mark")
+    assert(findText(row, "Inbox note"), "title")
+    assert(not dash.audi:get("audi-inbox").read_at, "unread before it is shown")
+    row:onTapRow()
+    assert(dash.mode == "audi", "tap didn't open Audi")
+    assert(dash.audi.current_id == "audi-inbox", "opened a different entry")
+    assert(findText(dash[1], "Inbox note"), "fullscreen title")
+    assert(dash.audi:get("audi-inbox").read_at, "showing it didn't mark it read")
+    dash:toggleAudi()
+    row = audiRow("audi-inbox")
+    assert(row, "read entry left the inbox")
+    assert(not findText(row, "● 待看"), "still marked unread after it was shown")
+    reader_settings.dash_audi_auto_switch = nil
+end)
+
+test("Audi font A- and A+ repaginate and stick", function()
+    local dash = dashboard()
+    if dash.mode ~= "audi" then
+        dash:toggleAudi()
+    end
+    assert(dash.audi_font_smaller and dash.audi_font_larger, "no font controls")
+    assert(dash:audiFontSize() == 18, "default")
+    assert(dash.audi_scroll and dash.audi_scroll.default_font_size == 18, "scroll size")
+    dash.audi_font_larger.callback()
+    assert(dash:audiFontSize() == 20, "didn't step up")
+    assert(reader_settings.dash_audi_font_size == 20, "not saved")
+    assert(dash.audi_scroll.default_font_size == 20, "scroll didn't repaginate")
+    assert(dash.audi_scroll.css:find("line-height: 1.2", 1, true), "audi css not tightened")
+    dash.audi_font_smaller.callback()
+    assert(dash:audiFontSize() == 18, "didn't step down")
+    reader_settings.dash_audi_font_size = 28
+    dash:rebuild("full")
+    dash.audi_font_larger.callback()
+    assert(dash:audiFontSize() == 28, "stepped past the max")
+    reader_settings.dash_audi_font_size = 14
+    dash:rebuild("full")
+    dash.audi_font_smaller.callback()
+    assert(dash:audiFontSize() == 14, "stepped past the min")
+    reader_settings.dash_audi_font_size = nil
+    dash:rebuild("full")
+    assert(dash:audiFontSize() == 18, "cleared setting didn't restore the default")
+    if dash.mode == "audi" then
+        dash:toggleAudi()
+    end
+end)
+
+test("Audi idle returns home once, and resume does too when the window has passed", function()
+    local dash = dashboard()
+    if dash.mode ~= "audi" then
+        dash:toggleAudi()
+    end
+    assert(dash.mode == "audi", "setup")
+    assert(scheduled[dash.audi_idle_task], "idle timer not armed")
+    local shown_id = dash.audi.current_id
+    dash.clock = function() return 1000000 end
+    dash.audi_idle_at = 1000000
+    dash:onAudiIdleFired()
+    assert(dash.mode == "audi", "left early")
+    dash.audi_idle_at = 1000000 - 600
+    refreshes = {}
+    dash:onAudiIdleFired()
+    assert(dash.mode == "dash", "didn't return home")
+    assert(not scheduled[dash.audi_idle_task], "timer still armed after leaving")
+    local full = false
+    for _, refresh in ipairs(refreshes) do
+        if refresh.widget == dash and refresh.type == "full" then full = true end
+    end
+    assert(full, "idle return didn't full-refresh")
+    local rebuilds = #refreshes
+    dash:onAudiIdleFired()
+    assert(dash.mode == "dash", "fired again")
+    assert(#refreshes == rebuilds, "the idle timer rebuilt twice")
+    if shown_id then
+        assert(audiRow(shown_id), "the entry left the inbox after idle return")
+    end
+    dash.clock = nil
+    dash:toggleAudi()
+    local idle_at = dash.audi_idle_at
+    dash.clock = function() return idle_at + 50 end
+    dash:handleEvent({ handler = "onGesture" })
+    assert(dash.audi_idle_at == idle_at + 50, "a gesture didn't reset the idle window")
+    dash:handleEvent({ handler = "onKeyPress" })
+    assert(dash.audi_idle_at == idle_at + 50, "a key didn't reset the idle window")
+    plugin:onSuspend()
+    assert(not scheduled[dash.audi_idle_task], "suspend left the idle timer armed")
+    dash.clock = function() return idle_at + 50 + 601 end
+    refreshes = {}
+    plugin:onResume()
+    assert(dash.mode == "dash", "resume after 10 minutes stayed in Audi")
+    assert(httpGet("/ping"):find("200 OK", 1, true), "server didn't come back")
+    dash.clock = nil
+    dash.audi_idle_at = nil
+end)
+
 test("clear keeps Audi history and shows the idle line", function()
     local dash = dashboard()
+    if dash.mode == "audi" then
+        dash:toggleAudi()
+    end
+    httpRequest("POST", "/v1/inbox", readToken(),
+        '{"id":"briefing-keep","title":"Keep me","source":"dada","body":"Still here"}')
+    runScheduled()
     dash:toggleAudi()
     local kept = #dash.audi.entries
     assert(kept >= 1, "setup")
@@ -725,6 +893,23 @@ test("clear keeps Audi history and shows the idle line", function()
     assert(findText(dash[1], "暂无内容"), "idle text missing after clear")
     assert(dash.audi:current() == nil, "still showing an entry")
     dash:toggleAudi()
+    assert(dash.mode == "dash", "didn't return home")
+    assert(not audiRow(), "cleared Audi entries stayed in the inbox")
+    assert(briefingRow("briefing-keep"), "clear removed a briefing")
+    httpRequest("POST", "/v1/audi", readToken(),
+        '{"id":"fresh-file","replace_id":"audi-inbox","title":"Replaced note","body":"Changed"}')
+    assert(dash.mode == "audi", "an update didn't auto-switch")
+    assert(dash.audi:get("audi-inbox").title == "Replaced note", "title not updated")
+    assert(dash.audi:get("audi-inbox").ref == 3, "replace didn't keep ref")
+    assert(dash.audi:get("audi-test-12").inbox_hidden == true, "another entry was un-hidden")
+    dash:toggleAudi()
+    local row = audiRow("audi-inbox")
+    assert(row, "the replaced entry is not back in the inbox")
+    assert(findText(row, "Replaced note"), "inbox title is stale")
+    assert(findText(row, "#3"), "ref missing after replace")
+    assert(not audiRow("audi-test-12"), "a cleared entry reappeared")
+    dash:markRead(dash.store:getMessage("briefing-keep"))
+    runScheduled()
 end)
 
 test("tapping Exit saves data and undoes everything", function()

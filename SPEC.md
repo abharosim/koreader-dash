@@ -10,7 +10,7 @@ An always-on dashboard for a Kindle Paperwhite 4. It shows the date, time and ba
 ## 1. Principles
 
 1. **The Kindle mostly displays.** Senders push data to it. The one exception is weather, which the Kindle fetches itself ([section 6](#weather)) so it works without the Mac.
-2. **Three kinds of data.** One JSON **state** blob holds current values, an **inbox** queue holds messages, and an **Audi** history holds entries pushed for the Audi view. Audi entries are stored separately and never appear in the inbox.
+2. **Three kinds of data.** One JSON **state** blob holds current values, an **inbox** queue holds messages, and an **Audi** history holds entries pushed for the Audi view. Audi entries are stored apart from inbox messages (`GET /v1/inbox` never returns them). The dash home Inbox list shows both.
 3. **Everything but the clock, battery and weather is event-driven.** A value changes only when an HTTP request or a tap changes it.
 4. **No redraw without a change.** Sending the same state again doesn't touch the screen, so senders can repeat themselves freely.
 
@@ -51,7 +51,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 │ about 11 h left · 2h 10m awake       │
 ├──────────────────────────────────────┤
 │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐  │
-│ │Grok  │ │Claude│ │DSeek │ │Gemini│  │
+│ │Grok  │ │Claude│ │DSeek │ │xAI   │  │
 │ │17%   │ │35%   │ │¥110  │ │No    │  │
 │ │▓░░░░░│ │▓▓░░░░│ │left  │ │data  │  │
 │ │Nov 20│ │week  │ │      │ │yet   │  │
@@ -62,8 +62,9 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 │ Tests failed on main. 3 suites...    │
 │ ! ci  ·  15:02                       │
 │ ──────────────────────────────────── │
-│ Hello from my Mac            [ Read ]│
-│ mac  ·  14:40                        │
+│ DeepSeek review                 Audi │
+│ ● 待看                         #12   │
+│ DeepSeek  ·  19:12                   │
 │                                      │
 │ 192.168.1.152:8787  [Audi][Lock][Exit]│
 └──────────────────────────────────────┘
@@ -71,23 +72,24 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 
 - The page covers the whole screen with an opaque background.
 - Today is shown inverted on the calendar, which is laid out with Sunday first and rebuilt when the date changes. The calendar is a little smaller than before, to make room for the usage row.
-- **AI usage:** a row of four equal tiles under the clock, for Grok, Claude, DeepSeek and Gemini, always in that order. Each tile has the provider (or the sender's `label`) with the time it was last updated on the right, a headline (a percentage, a balance, a spend, or the sender's own `headline`), a bar when a percentage is known, and one line with the sender's `detail` and the reset time. A provider with nothing sent shows **No data yet**. Values are **stale** after 24 hours, after their `expires_at`, or once their `resets_at` has passed: the title row then reads `stale Nov 12` and the bar turns grey, so an old number is never mistaken for a current one. Only a tile turning stale (or fresh) rebuilds the screen. Code: `dash_usage.lua` (pure, tested) and `Dashboard:buildUsage`.
+- **AI usage:** a row of four equal tiles under the clock, for Grok, Claude, DeepSeek and xAI API, always in that order. Each tile has the provider (or the sender's `label`) with the time it was last updated on the right, a headline (a percentage, a balance, a spend, or the sender's own `headline`), a bar when a percentage is known, and one line with the sender's `detail` and the reset time. A provider with nothing sent shows **No data yet**. Values are **stale** after 24 hours, after their `expires_at`, or once their `resets_at` has passed: the title row then reads `stale Nov 12` and the bar turns grey, so an old number is never mistaken for a current one. Only a tile turning stale (or fresh) rebuilds the screen. Code: `dash_usage.lua` (pure, tested) and `Dashboard:buildUsage`.
 - Missing values, or weather past its `expires_at`, show `—`.
-- **Inbox order:** only unread messages appear, with `high` priority first, then oldest first. High priority messages are bold and marked `!`.
+- **Inbox order:** the home list merges unread inbox messages and Audi entries that are still listed, newest first. A high-priority briefing is still bold and marked `!`; it does not jump ahead of a newer row. Read briefings leave the list. A read Audi entry stays, without the unread mark. The HTTP inbox and `Store:unreadMessages()` keep the old order (high priority, then oldest) for the API and the SimpleUI module.
 - **Preview:** up to two lines of the body as plain text, with Markdown syntax removed.
 - **Read button:** marks that message read, so it leaves the list.
-- **Tapping a message:** opens the reader, described below.
+- **Tapping a briefing:** opens the reader, described below. Briefings never open that reader on their own.
+- **Tapping an Audi entry:** opens Audi fullscreen on that entry. The row shows an **Audi** tag, the ref (`#12`), and, until it has been shown, `● 待看`. Showing it in Audi fullscreen marks it read. `action: clear` takes every Audi row off this list (the archive stays). `replace_id`, or the same id with a new title or body, updates that row in place and lists it again.
 - **Paging:** `<` and `>` appear when the messages don't fit on one page.
 - **Exit:** the button in the bottom right corner (15% of the screen width) closes the dashboard and returns to KOReader.
 - **Lock:** a **Lock** button sits left of Exit, the same size. Holding it locks the dashboard: it then reads **Locked**. Tapping it only shows a hint; holding it again unlocks. While locked, touch does nothing except two cases: holding **Locked** unlocks, and, when Audi mode is showing an entry, scrolling or tapping through that entry's body still works. History paging, the Audi button, Exit, Read, Read all and opening messages stay blocked. Only touch is blocked: the HTTP API, the clock and sleep work as usual. The lock isn't saved, so restarting KOReader clears it. Locking and unlocking are written to `dash_m0.log`.
 - **Audi:** a third button, the same size, sits left of Lock. Tapping it opens Audi mode (the button is drawn inverted); tapping it again returns to the dashboard. See [Audi mode](#audi-mode).
-- **Read all:** shown in the inbox header, beside the page buttons, while anything is unread. It asks to confirm, then marks every message read in one save.
+- **Read all:** shown in the inbox header, beside the page buttons, while an inbox message is unread. It asks to confirm, then marks every inbox message read in one save. Audi entries are left as they are.
 - **Instead of sleeping:** when KOReader would go to sleep, it opens Dash instead. This covers the idle timer, the Sleep menu item and the Sleep gesture, which all go through `UIManager:suspend`. Exit returns to whatever was open before. Exceptions, which sleep as usual:
   - the power button (and a cover), because the Kindle's own power manager handles those before KOReader hears about them;
   - sleep requested while Dash is already open;
   - battery below 20% while not charging.
   KOReader's idle timer doesn't run while charging, so on the charger nothing changes. The menu is now **Tools → Dash**, with **Open Dash** and a checkbox **Open Dash instead of sleeping** (on by default; saved as `dash_replaces_sleep` in KOReader's settings).
-- **Home screen module:** with the SimpleUI plugin installed, Dash adds a **Dash** module to its home screen (SimpleUI's layout editor, under Extras; off until added). It shows four lines: the weather, the todo count and unread total, the top unread message's title (high priority first, as on the dashboard), and the battery drain. Tapping it opens Dash. It shows the data Dash last received, since the server only runs while Dash is open, and the home screen redraws when Dash closes. It honours SimpleUI's per-module scale. Code: `dash_home.lua`, registered from `Dash:init` through SimpleUI's `Registry.register`.
+- **Home screen module:** with the SimpleUI plugin installed, Dash adds a **Dash** module to its home screen (SimpleUI's layout editor, under Extras; off until added). It shows four lines: the weather, the todo count and unread inbox total, the top unread message's title (high priority first, then oldest; this line does not include Audi entries), and the battery drain. Tapping it opens Dash. It shows the data Dash last received, since the server only runs while Dash is open, and the home screen redraws when Dash closes. It honours SimpleUI's per-module scale. Code: `dash_home.lua`, registered from `Dash:init` through SimpleUI's `Registry.register`.
 
 ### Message reader
 
@@ -124,11 +126,17 @@ With nothing to show, the page says **暂无内容**.
 
 With an entry, the header shows the title, then `#12 · DeepSeek · 19:12` (the spoken `ref`, the source, and the time from `messageTime()`: `HH:MM` today, `Mon DD, HH:MM` on another day, US Eastern). `<` `>` and `3/12` on the right move through the saved history. The newest entry is last. Paging does not change `ref`. The body is the same Markdown as the inbox reader (`dash_markdown.lua` and `ScrollHtmlWidget`): swipe or tap to scroll. Links show their text, images show their alt text, and raw HTML is escaped.
 
-The device keeps the last 20 entries (`AUDI_HISTORY_LIMIT` in `dash_audi_store.lua`; `audi_history_limit` in `dash_config.json` overrides it). A 21st entry drops the oldest. There is no "unread, so keep it" rule.
+The device keeps the last 20 entries (`AUDI_HISTORY_LIMIT` in `dash_audi_store.lua`; `audi_history_limit` in `dash_config.json` overrides it). A 21st entry drops the oldest. There is no "unread, so keep it" rule. Dropped entries leave the home list because they are gone from the store.
 
-**Open Audi mode for new items** (Dash menu, saved as `dash_audi_auto_switch`) defaults to on. When a new entry arrives, or an existing one is updated, Dash closes an open inbox reader, switches to Audi mode, shows that entry, and does a `full` refresh. The same happens while the screen is locked: the new entry is shown and can be scrolled, and history paging, leaving Audi and Exit stay blocked. With the setting off, Dash stays where it is and the Audi button reads `Audi·N` until you open Audi mode. A retry of the same id with the same title and body does not refresh or switch. After the power button, if auto-switch is on and an entry arrived that was never shown, resume opens Audi mode and full-refreshes.
+The body is denser than the inbox reader. The Audi page margin is 8 (the dashboard's is 16) and the gap under the header is 4 (it was 8). The body face defaults to 18 (it was 20). **A-** and **A+** in the Audi header, including on the idle screen, step that size by 2, from 14 to 28. The new size is saved as `dash_audi_font_size` in KOReader's settings and the body is repaginated immediately. A missing setting means 18.
 
-`action: clear` (or `POST /v1/audi/clear`) returns to **暂无内容** and keeps the history.
+**Open Audi mode for new items** (Dash menu, saved as `dash_audi_auto_switch`) defaults to on. When a new entry arrives, or an existing one is updated, Dash closes an open inbox reader, switches to Audi mode from whatever view is showing, shows that entry, and does a `full` refresh. The same happens while the screen is locked: the new entry is shown and can be scrolled, and history paging, leaving Audi and Exit stay blocked. With the setting off, Dash stays where it is: the entry is in the home Inbox with `● 待看`, and the Audi button reads `Audi·N` until you open it. A retry of the same id with the same title and body does not refresh or switch. After the power button, if auto-switch is on and an entry arrived that was never shown, resume opens Audi mode and full-refreshes.
+
+Showing an entry in Audi fullscreen sets its `read_at`. That is the only way an Audi entry becomes read. Read all does not touch Audi entries.
+
+**Idle return.** While Audi mode is showing, including when the screen is locked on the current entry, 10 minutes without a tap, swipe, key or page turn leaves Audi and returns to the dash home, with a `full` refresh. The entry stays in the Inbox. Any of those inputs starts the 10 minutes over, and so does a new or updated entry taking the screen. The wait is `TIMEOUT_SECONDS` in `dash_audi_idle.lua` (600). `audi_idle_seconds` in `dash_config.json` overrides it, when it is a whole number from 1 to 86400. The timer is cancelled on leaving Audi, on Exit and on suspend, and it does not run twice. On resume, if those 10 minutes already passed, Dash is back on the home screen; if a new entry arrived while the Kindle was asleep and auto-switch is on, that entry still opens.
+
+`action: clear` (or `POST /v1/audi/clear`) returns to **暂无内容** and keeps the history in the store and on `GET /v1/audi`. Those entries leave the home Inbox (`inbox_hidden`) until a later create or update. A retry of the same title and body stays off the list. An update keeps the id and the ref and lists that one row again.
 
 ### Refresh rules
 
@@ -138,6 +146,8 @@ The device keeps the last 20 entries (`AUDI_HISTORY_LIMIT` in `dash_audi_store.l
 | The date changed, or weather expired | `full`, with the screen rebuilt |
 | State or inbox changed; changes are grouped over 1 second | `partial` |
 | A new or updated Audi entry is shown, or Audi mode is opened or closed | `full` |
+| Audi has been idle for 10 minutes, or resume finds that it has | `full`, back on the dash home |
+| The Audi body size changes | `full`, and the body is repaginated |
 | Every 60 minutes | `full`, to clear ghosting |
 
 ---
@@ -189,7 +199,7 @@ The dashboard displays these fields. Any other fields are stored and returned by
   "grok":      { "used_pct": 17.4, "resets_at": 1795217040, "label": "Grok Bot", "updated_at": 1794637579 },
   "anthropic": { "used_pct": 35, "headline": "35% · 5h 9%", "detail": "week", "resets_at": 1795050000, "updated_at": 1794637579 },
   "deepseek":  { "balance": 110.0, "currency": "CNY", "updated_at": 1794637579 },
-  "gemini":    { "spent": 3.2, "currency": "USD", "detail": "Nov", "updated_at": 1794637579 }
+  "xai":       { "spent": 3.2, "currency": "USD", "detail": "Nov", "updated_at": 1794637579 }
 }
 ```
 
@@ -258,7 +268,7 @@ jq -n --arg title "Weekly report" --rawfile body report.md '{title: $title, body
 
 ### Audi entry
 
-Audi entries are not inbox messages. `GET /v1/inbox` never returns them, and the inbox screen never lists them. They live in `dash_audi.json` and `dash_audi_bodies/`.
+Audi entries are not inbox messages. `GET /v1/inbox` never returns them. The dash home screen lists them beside unread briefings; that list is not the HTTP inbox. They live in `dash_audi.json` and `dash_audi_bodies/`.
 
 | Field | Type | Set by | Rules |
 |---|---|---|---|
@@ -314,7 +324,10 @@ plugin/dash.koplugin/
 ├── dash_server.lua      # non-blocking HTTP; no KOReader imports
 ├── dash_api.lua         # routes, auth, validation
 ├── dash_store.lua       # state blob, inbox, JSON file
-├── dash_audi_store.lua  # Audi history, separate from the inbox
+├── dash_audi_store.lua  # Audi history; the home list reads it, the HTTP inbox does not
+├── dash_audi_font.lua   # Audi body size: default 18, range 14–28
+├── dash_audi_idle.lua   # 10-minute return from Audi to the dash home
+├── dash_inbox.lua       # merged home Inbox: briefings and Audi entries
 ├── dash_power.lua       # keep-awake
 ├── dash_time.lua        # Eastern time and month layouts
 ├── dash_usage.lua       # AI usage tiles: labels, staleness
@@ -375,7 +388,7 @@ Everything lives under `koreader/settings/`, so it comes back after a restart.
 | `dash_messages/<n>.md` | One file per message body, named by sequence number |
 | `dash_audi.json` | The Audi history index, the current entry and the next `ref` |
 | `dash_audi_bodies/<n>.md` | One file per Audi body, named by sequence number |
-| `dash_config.json` | The access token. Optional `audi_history_limit` overrides 20 |
+| `dash_config.json` | The access token. Optional `audi_history_limit` overrides 20. Optional `audi_idle_seconds` overrides the 10-minute Audi idle return |
 | `dash_restart_request` | Created by `scripts/deploy.sh`; the plugin restarts KOReader and deletes it |
 | `dash_open_request` | Opens Dash on the next start, then is deleted. Created by `scripts/deploy.sh`, and by a restart made while Dash is open |
 
@@ -405,6 +418,8 @@ Assume a trusted home network. HTTP is unencrypted, so anyone able to capture tr
 The plugin doesn't care what sends data. These are the first senders, all running on the Mac.
 
 ### `kdash`
+
+Not built. Nothing in this repo is named `kdash`. Senders that exist are the scripts under `scripts/` (`inbox-send.sh`, `audi-push.sh`, `ai-usage.sh`, and the outbox job). The interface below is only the shape a future CLI would have.
 
 POSIX shell using `curl` and `jq`. Settings come from `~/.config/kdash/config` (mode `600`), or from `KDASH_URL` and `KDASH_TOKEN`.
 
@@ -520,8 +535,8 @@ Both bodies end with the working directory, and `data` holds the first 8 charact
 |---|---|---|
 | DeepSeek | `GET https://api.deepseek.com/user/balance`, documented. Shows the balance, USD if the account has both currencies | `DEEPSEEK_API_KEY` |
 | Claude | `GET https://api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20`: the 7-day and 5-hour figures Claude Code's `/usage` shows. **Undocumented**, so it may stop working; the tile then goes stale rather than showing a wrong number | `KDASH_CLAUDE_FROM_KEYCHAIN=1` (set by the launchd job): koreader-dash's own login from `scripts/claude-login.py` (browser OAuth with PKCE, scope `user:profile`, Keychain item `koreader-dash-claude-oauth`), refreshed and rotated by `scripts/lib/claude-oauth.sh` under a lock; without it, Claude Code's own login is read (never written) while still valid. Or `CLAUDE_OAUTH_TOKEN`. Sends `User-Agent: claude-code/<installed version>` and honours `429 Retry-After` (10 to 60 minutes). On failure the tile keeps its last numbers and gets `expires_at: 1` and `stale_label: "已过期"`, so it reads `已过期 07:10`; the next success clears both |
-| Grok | Plan usage (Grok Bot, SuperGrok) has no API, so it's sent by hand: `--grok-pct 17.4 --grok-resets 2026-11-20T23:24:00Z`. For xAI API credits instead, the documented management API (`GET https://management-api.x.ai/v1/billing/teams/{team}/prepaid/balance`) | `XAI_MANAGEMENT_KEY` and `XAI_TEAM_ID` (optional) |
-| Gemini | No usage or balance API for Gemini API keys; spend is only in Google Cloud Billing. Sent by hand: `--gemini-spent 3.20 --gemini-detail Nov` | none |
+| Grok | Plan usage (Grok Bot, SuperGrok) has no API, so it's sent by hand: `--grok-pct 17.4 --grok-resets 2026-11-20T23:24:00Z` | none |
+| xAI API | Spend this month and prepaid balance from the xAI management API. Hand flags work too: `--xai-spent 3.20 --xai-detail Nov`. A `gemini` object in the state blob is stored and not shown; there is no Gemini tile | `XAI_MANAGEMENT_KEY` and `XAI_TEAM_ID` (optional) |
 
 Every provider takes `--<provider>-pct`, `-resets`, `-spent`, `-balance`, `-currency`, `-detail`, `-label`, `-headline` and `-clear`; an empty text value removes that field. Hand-set values count as updated now. `--dry-run` prints the JSON instead of sending it.
 
@@ -579,7 +594,7 @@ If `/ping` proves unreliable while idle, stop and switch to the Kindle polling a
 | Wi-Fi power saving makes the Kindle unreachable while idle | Tested in Milestone 0; polling is the fallback |
 | Kindle system software takes over the screen | Tested in Milestone 0 |
 | Ghosting builds up | Hourly full refresh, adjustable |
-| Kindle clock drifts, since nothing here corrects it | `kdash doctor` warns if it's over 60 seconds. A badly wrong clock can also make secure connections fail, which would stop weather. |
+| Kindle clock drifts, since nothing here corrects it | Nothing in the repo checks the clock (`kdash doctor` was never built). A badly wrong clock can also make secure connections fail, which would stop weather. |
 | Open-Meteo is down or changes its API | Fetches fail, the last forecast expires after 3 hours, and the screen says so |
 | KOReader internals change | Target one release and use few internal APIs |
 | Battery wear from always charging | Accepted for now; a smart plug could limit charging later |
