@@ -109,7 +109,13 @@ function AudiView.build(opts)
     }
     pager.overlap_align = "right"
     local title_height = math.max(title:getSize().h, pager:getSize().h)
-    local parts = { "#" .. tostring(entry.ref) }
+    local parts = {}
+    if opts.kind_label and opts.kind_label ~= "" then
+        table.insert(parts, opts.kind_label)
+    end
+    if entry.ref then
+        table.insert(parts, "#" .. tostring(entry.ref))
+    end
     if type(entry.source) == "string" and entry.source ~= "" then
         table.insert(parts, entry.source)
     end

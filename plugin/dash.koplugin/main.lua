@@ -241,6 +241,8 @@ local function onAudiChange(info)
     end
     if info.kind == "cleared" then
         if dash.mode == "audi" then
+            dash.history_kind = nil
+            dash.history_id = nil
             dash:showAudi("full")
         elseif info.show then
             dash:rebuild("partial")

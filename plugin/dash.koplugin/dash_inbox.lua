@@ -7,6 +7,9 @@
 
 local Inbox = {}
 
+-- Audi mode pages this many items, briefings and Audi entries together.
+Inbox.HISTORY_LIMIT = 10
+
 local function timeOf(entry)
     if type(entry.display_at) == "number" then
         return entry.display_at
@@ -59,6 +62,62 @@ function Inbox.merge(messages, entries)
         end
         return tostring(a.id) < tostring(b.id)
     end)
+    return items
+end
+
+-- The Audi pager: the latest HISTORY_LIMIT briefings and Audi entries, oldest first
+-- so the newest is last (the same direction as the Audi < > buttons). Read state
+-- does not matter. Cleared Audi rows (inbox_hidden) stay out; the stores themselves
+-- are not pruned here, so an unread briefing is never deleted to make this list.
+function Inbox.history(messages, entries)
+    local items = {}
+    local order = 0
+    local function add(item)
+        order = order + 1
+        item.order = order
+        items[#items + 1] = item
+    end
+    if type(messages) == "table" then
+        for _, message in ipairs(messages) do
+            if type(message) == "table" then
+                add{
+                    kind = "briefing",
+                    label = "日报",
+                    at = timeOf(message),
+                    id = message.id,
+                    message = message,
+                }
+            end
+        end
+    end
+    if type(entries) == "table" then
+        for _, entry in ipairs(entries) do
+            if type(entry) == "table" and not entry.inbox_hidden then
+                add{
+                    kind = "audi",
+                    label = "Audi",
+                    at = timeOf(entry),
+                    id = entry.id,
+                    entry = entry,
+                }
+            end
+        end
+    end
+    -- Time first. The same second keeps store order, so a row just appended
+    -- stays after rows that share its timestamp.
+    table.sort(items, function(a, b)
+        if a.at ~= b.at then
+            return a.at < b.at
+        end
+        return a.order < b.order
+    end)
+    if #items > Inbox.HISTORY_LIMIT then
+        local kept = {}
+        for index = #items - Inbox.HISTORY_LIMIT + 1, #items do
+            kept[#kept + 1] = items[index]
+        end
+        items = kept
+    end
     return items
 end
 

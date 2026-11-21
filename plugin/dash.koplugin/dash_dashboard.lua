@@ -696,13 +696,14 @@ function Dashboard:buildDashMain(width, height, margin, bar_height)
     return main
 end
 
-function Dashboard:syncAudiIndex()
+function Dashboard:syncHistory()
+    self.history = Inbox.history(self.store.messages, self.audi and self.audi.entries)
     self.audi_index = nil
-    if not self.audi or not self.audi.current_id then
+    if not self.history_id then
         return
     end
-    for index, entry in ipairs(self.audi.entries) do
-        if entry.id == self.audi.current_id then
+    for index, item in ipairs(self.history) do
+        if item.kind == self.history_kind and item.id == self.history_id then
             self.audi_index = index
             return
         end
@@ -737,25 +738,32 @@ function Dashboard:now()
 end
 
 function Dashboard:buildAudiMain(width, height, margin, bar_height)
-    self:syncAudiIndex()
+    self:syncHistory()
     -- Audi's own margin, about half the dashboard page margin. The bottom bar stays put.
     local content_margin = Screen:scaleBySize(AudiView.PAGE_MARGIN)
     self.audi_content_margin = content_margin
     local content_width = width - content_margin * 2
     local available = height - bar_height - margin - content_margin
-    local entry = self.audi and self.audi_index and self.audi.entries[self.audi_index]
-    local time_text = nil
-    if entry then
+    local item = self.history and self.audi_index and self.history[self.audi_index]
+    local entry, body, time_text
+    if item and item.kind == "audi" then
+        entry = item.entry
+        body = self.audi:getBody(entry)
         time_text = messageTime({ received_at = entry.display_at or entry.received_at })
+    elseif item and item.kind == "briefing" then
+        entry = { title = item.message.title or "", source = item.message.source }
+        body = self.store:getBody(item.message)
+        time_text = messageTime(item.message)
     end
     local view = AudiView.build{
         width = content_width,
         height = available,
         entry = entry,
-        body = entry and self.audi:getBody(entry) or nil,
+        body = body,
         index = self.audi_index,
-        total = self.audi and #self.audi.entries or 0,
+        total = self.history and #self.history or 0,
         time_text = time_text,
+        kind_label = item and item.label,
         font_size = self:audiFontSize(),
         show_parent = self,
         on_page = function(delta) self:pageAudi(delta) end,
@@ -856,9 +864,29 @@ end
 function Dashboard:showAudi(refresh)
     self:closeReader()
     self.mode = "audi"
-    if self.audi then
+    if self.history_pick_newest then
+        self.history_pick_newest = false
+        local items = Inbox.history(self.store.messages, self.audi and self.audi.entries)
+        local newest = items[#items]
+        if newest then
+            self.history_kind = newest.kind
+            self.history_id = newest.id
+            if newest.kind == "audi" and self.audi then
+                self.audi:setCurrent(newest.id)
+            end
+        end
+    elseif self.audi and self.audi.pending_show and self.audi.current_id then
+        self.history_kind = "audi"
+        self.history_id = self.audi.current_id
+    end
+    if self.history_kind == "audi" and self.audi and self.history_id then
+        self.audi:setCurrent(self.history_id)
+        self.audi:markDisplayed(self.history_id)
+    elseif self.audi and self.history_kind ~= "briefing" then
         local entry = self.audi:current()
         if entry then
+            self.history_kind = "audi"
+            self.history_id = entry.id
             self.audi:markDisplayed(entry.id)
         else
             self.audi:markShown()
@@ -886,21 +914,25 @@ function Dashboard:toggleAudi()
     if self.mode == "audi" then
         self:leaveAudiHome("full")
     else
+        self.history_pick_newest = true
         self:showAudi("full")
     end
 end
 
 function Dashboard:pageAudi(delta)
-    if self.locked or self.mode ~= "audi" or not self.audi or not self.audi_index then
+    if self.locked or self.mode ~= "audi" or not self.history or not self.audi_index then
         return
     end
-    local next_index = self.audi_index + delta
-    local entry = self.audi.entries[next_index]
-    if not entry then
+    local item = self.history[self.audi_index + delta]
+    if not item then
         return
     end
-    self.audi:setCurrent(entry.id)
-    self.audi:markDisplayed(entry.id)
+    self.history_kind = item.kind
+    self.history_id = item.id
+    if item.kind == "audi" and self.audi then
+        self.audi:setCurrent(item.id)
+        self.audi:markDisplayed(item.id)
+    end
     self:noteAudiInput()
     self:rebuild("partial")
 end
@@ -1025,6 +1057,8 @@ function Dashboard:openAudiEntry(entry)
     if self.locked or not entry or not self.audi then
         return
     end
+    self.history_kind = "audi"
+    self.history_id = entry.id
     self.audi:setCurrent(entry.id)
     self:showAudi("full")
 end

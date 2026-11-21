@@ -124,7 +124,7 @@ Audi mode replaces the clock, calendar, usage tiles and inbox with one entry. Th
 
 With nothing to show, the page says **暂无内容**.
 
-With an entry, the header shows the title, then `#12 · DeepSeek · 19:12` (the spoken `ref`, the source, and the time from `messageTime()`: `HH:MM` today, `Mon DD, HH:MM` on another day, US Eastern). `<` `>` and `3/12` on the right move through the saved history. The newest entry is last. Paging does not change `ref`. The body is the same Markdown as the inbox reader (`dash_markdown.lua` and `ScrollHtmlWidget`): swipe or tap to scroll. Links show their text, images show their alt text, and raw HTML is escaped.
+With an entry, the header shows the title, then the kind and `#12 · DeepSeek · 19:12` when it is an Audi entry (the spoken `ref`, the source, and the time from `messageTime()`: `HH:MM` today, `Mon DD, HH:MM` on another day, US Eastern). A briefing read from here is labeled **日报** and has no ref. `<` `>` and `3/12` move through the latest 10 briefings and Audi entries together, oldest first, so the newest is last. Read items stay in this pager. The inbox store and the Audi store are not trimmed to 10. Paging does not change `ref`. Opening a briefing from the Inbox still uses the inbox reader. The body is the same Markdown as the inbox reader (`dash_markdown.lua` and `ScrollHtmlWidget`): swipe or tap to scroll. Links show their text, images show their alt text, and raw HTML is escaped.
 
 The device keeps the last 20 entries (`AUDI_HISTORY_LIMIT` in `dash_audi_store.lua`; `audi_history_limit` in `dash_config.json` overrides it). A 21st entry drops the oldest. There is no "unread, so keep it" rule. Dropped entries leave the home list because they are gone from the store.
 
