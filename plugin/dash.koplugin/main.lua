@@ -12,7 +12,6 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 local json = require("json")
-local socket = require("socket")
 local _ = require("gettext")
 
 local DashTime = require("dash_time")
@@ -106,40 +105,6 @@ local function setFirewall(open)
             os.execute("iptables -A " .. formatted)
         end
     end
-end
-
-local function localIp()
-    local udp = socket.udp()
-    if not udp then
-        return nil
-    end
-    udp:settimeout(0)
-    -- Sends no packets; it asks the OS which interface it would route through.
-    local ok = udp:setpeername("203.0.113.1", 53)
-    local ip = ok and udp:getsockname()
-    udp:close()
-    if ip and ip ~= "0.0.0.0" then
-        return ip
-    end
-    return nil
-end
-
-local function statusText()
-    local lines = {
-        NetworkMgr:isConnected() and string.format("Wi-Fi on  %s:%d", localIp() or "no address", PORT) or "Wi-Fi off",
-        string.format("Pings: %d%s", Runtime.pings,
-            Runtime.last_ping and ("  last " .. DashTime.format("%H:%M", Runtime.last_ping)) or ""),
-    }
-    if Runtime.server_error then
-        table.insert(lines, "Server error: " .. Runtime.server_error)
-    end
-    if Runtime.store and Runtime.store.warning then
-        table.insert(lines, Runtime.store.warning)
-    end
-    if Runtime.audi and Runtime.audi.warning then
-        table.insert(lines, Runtime.audi.warning)
-    end
-    return table.concat(lines, "\n")
 end
 
 local function configPath()
@@ -477,7 +442,6 @@ local function openDashboard()
     Runtime.dashboard = Dashboard:new{
         store = Runtime.store,
         audi = Runtime.audi,
-        get_status = statusText,
         get_drain = drainText,
         get_audi_font = audiFontSize,
         set_audi_font = setAudiFontSize,

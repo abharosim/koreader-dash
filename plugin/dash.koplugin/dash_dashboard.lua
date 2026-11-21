@@ -290,7 +290,6 @@ local Dashboard = InputContainer:extend{
     covers_fullscreen = true,
     store = nil,      -- dash_store instance
     audi = nil,       -- dash_audi_store instance; listed on the home inbox, stored apart
-    get_status = nil, -- function returning the diagnostics text
     get_drain = nil,  -- function returning the battery tile's headline and detail
     get_audi_font = nil, -- function returning the saved Audi body size
     set_audi_font = nil, -- function(size) persisting that size
@@ -619,14 +618,29 @@ function Dashboard:buildBar(width, height, margin)
     lock_button.overlap_offset = { width - exit_size.w * 2 - margin - button_gap, bar_y }
     audi_button.overlap_offset = { width - exit_size.w * slots - margin - button_gap * 2, bar_y }
 
-    self.status_widget = TextBoxWidget:new{
-        text = self.get_status(),
-        face = Font:getFace("infofont", 16),
+    -- Home: the battery line that used to sit above the clock. Audi adds the time.
+    local audi = self.mode == "audi"
+    self.battery_widget = TextBoxWidget:new{
+        text = self:barText(),
+        face = Font:getFace("infofont", audi and 15 or 17),
         width = math.max(1, width - exit_size.w * slots - button_gap * (slots - 1) - margin * 3),
         height = exit_size.h,
     }
-    self.status_widget.overlap_offset = { margin, height - exit_size.h - margin }
+    self.battery_widget.overlap_offset = { margin, bar_y }
     return exit_size
+end
+
+-- Bottom-left of the bar. Home is the battery. Audi is the clock and the battery.
+function Dashboard:barText()
+    if self.mode ~= "audi" then
+        return batteryText()
+    end
+    local powerd = Device:getPowerDevice()
+    local level = string.format("%d%%", powerd:getCapacity())
+    if powerd:isCharging() then
+        level = level .. " charging"
+    end
+    return DashTime.format("%H:%M") .. "  ·  " .. level
 end
 
 function Dashboard:buildDashMain(width, height, margin, bar_height)
@@ -645,17 +659,11 @@ function Dashboard:buildDashMain(width, height, margin, bar_height)
         width = left_width,
         bold = true,
     }
-    self.battery_widget = TextBoxWidget:new{
-        text = batteryText(),
-        face = Font:getFace("infofont", 17),
-        width = left_width,
-    }
 
     local header = HorizontalGroup:new{
         align = "top",
         VerticalGroup:new{
             align = "left",
-            self.battery_widget,
             self.time_widget,
             TextBoxWidget:new{
                 text = dateText(),
@@ -783,7 +791,7 @@ function Dashboard:build()
             dimen = Geom:new{ w = width, h = height },
             allow_mirroring = false,
             main,
-            self.status_widget,
+            self.battery_widget,
             self.audi_button,
             self.lock_button,
             self.exit_button,
@@ -1031,8 +1039,8 @@ function Dashboard:refresh()
         self.on_minute()
     end
     if self.mode == "audi" then
-        if self.status_widget then
-            self.status_widget:setText(self.get_status())
+        if self.battery_widget then
+            self.battery_widget:setText(self:barText())
         end
         self.minutes_since_full_refresh = self.minutes_since_full_refresh + 1
         if self.minutes_since_full_refresh >= FULL_REFRESH_EVERY_MINUTES then
@@ -1051,8 +1059,7 @@ function Dashboard:refresh()
         self:build()
     else
         self.time_widget:setText(DashTime.format("%H:%M"))
-        self.status_widget:setText(self.get_status())
-        self.battery_widget:setText(batteryText())
+        self.battery_widget:setText(self:barText())
         local headline, detail = self.get_drain()
         self.drain_widget:setText(headline)
         self.drain_detail_widget:setText(detail)
