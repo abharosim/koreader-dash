@@ -5,6 +5,7 @@ local Device = require("device")
 local Dispatcher = require("dispatcher")
 local Event = require("ui/event")
 local InfoMessage = require("ui/widget/infomessage")
+local SpinWidget = require("ui/widget/spinwidget")
 local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -204,6 +205,15 @@ end
 
 local function setAudiFontSize(size)
     G_reader_settings:saveSetting(AUDI_FONT_SETTING, AudiFont.clamp(size))
+end
+
+-- Saves the size. If Audi is on screen, repaginates now. Otherwise the next
+-- time Audi is built it reads the saved value.
+local function applyAudiFontSize(size)
+    setAudiFontSize(size)
+    if Runtime.dashboard and Runtime.dashboard.mode == "audi" then
+        Runtime.dashboard:rebuild("full")
+    end
 end
 
 -- dash_config.json may set audi_idle_seconds. Missing or invalid keeps 10 minutes.
@@ -594,6 +604,25 @@ function Dash:addToMainMenu(menu_items)
                 help_text = _("When a new Audi entry arrives, open it and refresh the whole screen. While locked, that entry can still be scrolled."),
                 checked_func = audiAutoSwitch,
                 callback = function() G_reader_settings:flipNilOrTrue(AUDI_AUTO_SETTING) end,
+            },
+            {
+                text = _("Audi font size"),
+                help_text = _("Body size for Audi mode, from 14 to 28. Applied the next time Audi is shown, or immediately if it is already open."),
+                callback = function()
+                    UIManager:show(SpinWidget:new{
+                        title_text = _("Audi font size"),
+                        value = audiFontSize(),
+                        value_min = AudiFont.MIN,
+                        value_max = AudiFont.MAX,
+                        value_step = AudiFont.STEP,
+                        value_hold_step = AudiFont.STEP,
+                        default_value = AudiFont.DEFAULT,
+                        ok_text = _("Set"),
+                        callback = function(spin)
+                            applyAudiFontSize(spin.value)
+                        end,
+                    })
+                end,
             },
         },
     }

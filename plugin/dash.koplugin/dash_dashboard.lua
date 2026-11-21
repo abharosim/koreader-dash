@@ -752,13 +752,10 @@ function Dashboard:buildAudiMain(width, height, margin, bar_height)
         font_size = self:audiFontSize(),
         show_parent = self,
         on_page = function(delta) self:pageAudi(delta) end,
-        on_font = function(delta) self:adjustAudiFont(delta) end,
     }
     self.audi_scroll = view.scroll
     self.audi_prev = view.prev
     self.audi_next = view.next
-    self.audi_font_smaller = view.font_smaller
-    self.audi_font_larger = view.font_larger
     view.widget.overlap_offset = { content_margin, content_margin }
     return view.widget
 end
@@ -767,7 +764,6 @@ function Dashboard:build()
     local width, height = self.dimen.w, self.dimen.h
     local margin = Screen:scaleBySize(16)
     self.audi_scroll, self.audi_prev, self.audi_next = nil, nil, nil
-    self.audi_font_smaller, self.audi_font_larger = nil, nil
     self.audi_content_margin = nil
     local exit_size = self:buildBar(width, height, margin)
     local main
@@ -900,20 +896,6 @@ function Dashboard:pageAudi(delta)
     self.audi:markDisplayed(entry.id)
     self:noteAudiInput()
     self:rebuild("partial")
-end
-
-function Dashboard:adjustAudiFont(delta)
-    local next_size = AudiFont.adjust(self:audiFontSize(), delta)
-    if next_size == self:audiFontSize() then
-        return
-    end
-    if self.set_audi_font then
-        self.set_audi_font(next_size)
-    end
-    self:noteAudiInput()
-    if self.mode == "audi" then
-        self:rebuild("full")
-    end
 end
 
 function Dashboard:cancelAudiIdle()
