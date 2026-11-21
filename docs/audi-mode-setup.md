@@ -6,7 +6,7 @@ Audi is a read-only second screen. The Kindle does not send a decision back: the
 
 ## 1. What the Kindle shows
 
-The bottom bar is `IP:port`, then **Audi**, **Lock** and **Exit**, each button about 15% of the screen width. Audi toggles the view. With an entry, the header is two short lines: the title, then `#12 · DeepSeek · 19:12` (spoken ref, source, and Eastern time via `messageTime()`). `<` `>` and `3/12` sit at the top right and are the only controls there. The body starts on the same left edge as the title. The page inset is 4, the HTML page and body margins are 0, and the scrollbar gutter is 2. Links show their text, images show their alt text, and raw HTML is shown as text.
+The bottom bar's left side is the time and the battery, such as `02:11  ·  90%`. **Audi**, **Lock** and **Exit** stay on the right, each button about 15% of the screen width. The address and the ping count are not shown. Audi toggles the view. With an entry, the header is two short lines: the title, then `#12 · DeepSeek · 19:12` (spoken ref, source, and Eastern time via `messageTime()`). `<` `>` and `3/12` sit at the top right and are the only controls there. The body starts on the same left edge as the title. The page inset is 4, the HTML page and body margins are 0, and the scrollbar gutter is 2. Links show their text, images show their alt text, and raw HTML is shown as text.
 
 With nothing current, the page says **暂无内容**.
 

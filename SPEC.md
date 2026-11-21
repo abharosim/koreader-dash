@@ -41,11 +41,10 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 
 ```
 ┌──────────────────────────────────────┐
-│ Battery 52%          November 2026   │
-│ 15:11              S M T W T F S     │
-│ Saturday, November 7 1 2 3 4 5 6 [7] │
-│ 18° Rain           8 9 10 ...        │
-│ High 21, low 14    ...               │
+│ 15:11                November 2026   │
+│ Saturday, November 7 S M T W T F S   │
+│ 18° Rain           1 2 3 4 5 6 [7]   │
+│ High 21, low 14    8 9 10 ...        │
 │ Todo: 3                              │
 │ Drain: −4.1%/h                       │
 │ about 11 h left · 2h 10m awake       │
@@ -66,7 +65,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 │ ● 待看                         #12   │
 │ DeepSeek  ·  19:12                   │
 │                                      │
-│ 192.168.1.152:8787  [Audi][Lock][Exit]│
+│ Battery 52%         [Audi][Lock][Exit]│
 └──────────────────────────────────────┘
 ```
 
@@ -80,6 +79,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 - **Tapping a briefing:** opens the reader, described below. Briefings never open that reader on their own.
 - **Tapping an Audi entry:** opens Audi fullscreen on that entry. The row shows an **Audi** tag, the ref (`#12`), and, until it has been shown, `● 待看`. Showing it in Audi fullscreen marks it read. `action: clear` takes every Audi row off this list (the archive stays). `replace_id`, or the same id with a new title or body, updates that row in place and lists it again.
 - **Paging:** `<` and `>` appear when the messages don't fit on one page.
+- **Battery:** the bottom left of the bar, where the connection line used to be. It reads `Battery 52%` or `Battery 52% (charging)`, and updates with the clock. The big clock is the top-left line.
 - **Exit:** the button in the bottom right corner (15% of the screen width) closes the dashboard and returns to KOReader.
 - **Lock:** a **Lock** button sits left of Exit, the same size. Holding it locks the dashboard: it then reads **Locked**. Tapping it only shows a hint; holding it again unlocks. While locked, touch does nothing except two cases: holding **Locked** unlocks, and, when Audi mode is showing an entry, scrolling or tapping through that entry's body still works. History paging, the Audi button, Exit, Read, Read all and opening messages stay blocked. Only touch is blocked: the HTTP API, the clock and sleep work as usual. The lock isn't saved, so restarting KOReader clears it. Locking and unlocking are written to `dash_m0.log`.
 - **Audi:** a third button, the same size, sits left of Lock. Tapping it opens Audi mode (the button is drawn inverted); tapping it again returns to the dashboard. See [Audi mode](#audi-mode).
@@ -120,7 +120,7 @@ The dashboard always shows US Eastern time, including daylight saving changes. `
 
 ### Audi mode
 
-Audi mode replaces the clock, calendar, usage tiles and inbox with one entry. The bottom bar stays, so Audi, Lock and Exit remain available. There is no Mark as read button and no way to send a decision back.
+Audi mode replaces the clock, calendar, usage tiles and inbox with one entry. The bottom bar stays, so Audi, Lock and Exit remain available. Its left side is the current time and the battery, for example `02:11  ·  90%` or `02:11  ·  90% charging`, in a small face. That line updates on the same minute tick as the home clock, and it does not run while the Kindle is suspended. There is no Mark as read button and no way to send a decision back. The Wi-Fi address and the ping count are not shown.
 
 With nothing to show, the page says **暂无内容**.
 
@@ -376,7 +376,7 @@ Applied when the dashboard opens and undone when it closes:
 ### Wi-Fi
 
 - Required KOReader settings: **Disable Wi-Fi connection when inactive** off, and **Restore Wi-Fi connection on resume** on.
-- The footer shows the current connection and IP address.
+- The screen does not show the address or the ping count. `/ping` still answers, and the count is still written to `dash_m0.log`.
 - While disconnected, the plugin retries in the background, backing off from 30 seconds to 5 minutes.
 - Give the Kindle a fixed IP address through a DHCP reservation on your router.
 

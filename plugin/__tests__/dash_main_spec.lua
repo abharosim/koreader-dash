@@ -191,7 +191,7 @@ local function lastShown() return shown[#shown] end
 -- The newest dashboard, which may be under a reader view.
 local function dashboard()
     for i = #shown, 1, -1 do
-        if shown[i].get_status then return shown[i] end
+        if shown[i].exit_button and shown[i].store then return shown[i] end
     end
 end
 
@@ -288,6 +288,10 @@ end)
 test("shows the battery level and updates it each minute", function()
     local dashboard = dashboard()
     assert(dashboard.battery_widget.text == "Battery 90% (charging)", dashboard.battery_widget.text)
+    assert(dashboard.battery_widget.overlap_offset[2] == dashboard.exit_button.overlap_offset[2],
+        "battery is not on the bottom bar")
+    assert(dashboard.battery_widget.overlap_offset[1] < dashboard.audi_button.overlap_offset[1],
+        "battery is not left of the buttons")
     battery.level, battery.charging = 41, false
     dashboard:refresh()
     assert(dashboard.battery_widget.text == "Battery 41%", dashboard.battery_widget.text)
@@ -334,11 +338,11 @@ test("holding Lock locks: only the Lock button gets touches", function()
 
     lock.received = 0
     dashboard.exit_button.received = 0
-    dashboard.status_widget.received = 0
+    dashboard.battery_widget.received = 0
     assert(dashboard:handleEvent({ handler = "onGesture" }) == true, "gesture not swallowed")
     assert(lock.received == 1, "the Lock button must still get gestures")
     assert(dashboard.exit_button.received == 0, "a gesture reached Exit")
-    assert(dashboard.status_widget.received == 0, "a gesture reached the rest of the dashboard")
+    assert(dashboard.battery_widget.received == 0, "a gesture reached the rest of the dashboard")
 end)
 
 test("holding Locked unlocks, and touches reach everything again", function()
@@ -346,9 +350,9 @@ test("holding Locked unlocks, and touches reach everything again", function()
     holdLock()
     assert(not dashboard.locked, "still locked")
     assert(dashboard.lock_button.text == "Lock", "button label: " .. tostring(dashboard.lock_button.text))
-    dashboard.status_widget.received = 0
+    dashboard.battery_widget.received = 0
     dashboard:handleEvent({ handler = "onGesture" })
-    assert(dashboard.status_widget.received == 1, "gestures still blocked after unlocking")
+    assert(dashboard.battery_widget.received == 1, "gestures still blocked after unlocking")
 end)
 
 test("opening twice doesn't create a second dashboard", function()
@@ -546,9 +550,19 @@ test("regression: no group gains children after it's measured", function()
     end
 end)
 
-test("the screen shows the ping count", function()
-    local status = dashboard().get_status()
-    assert(status:find("Pings: 1", 1, true), status)
+test("a ping still answers and is not written on the screen", function()
+    local dash = dashboard()
+    local function contains(widget, fragment)
+        if type(widget) ~= "table" then return false end
+        if type(widget.text) == "string" and widget.text:find(fragment, 1, true) then return true end
+        for _, child in ipairs(widget) do
+            if contains(child, fragment) then return true end
+        end
+        return false
+    end
+    assert(not contains(dash[1], "Pings"), "ping count is on screen")
+    assert(not contains(dash[1], "Wi-Fi"), "wifi line is on screen")
+    assert(httpGet("/ping"):find("200 OK", 1, true), "ping failed")
 end)
 
 test("suspend stops the server, resume restarts it", function()
@@ -562,7 +576,7 @@ test("the gesture action opens the dashboard", function()
     tapExit()
     local count = #shown
     plugin:onOpenDash()
-    assert(#shown == count + 1 and dashboard().get_status, "dashboard not opened by the action")
+    assert(#shown == count + 1 and dashboard().exit_button, "dashboard not opened by the action")
 end)
 
 test("Audi sits left of Lock, the same size, on the bottom row", function()
@@ -585,8 +599,16 @@ test("Audi toggles a fullscreen idle view and back to Dash", function()
     assert(dash.audi_button.preselect == true, "Audi button not marked selected")
     assert(findText(dash[1], "暂无内容"), "idle text missing")
     assert(not findText(dash[1], "Inbox"), "dashboard inbox still shown")
+    assert(dash.battery_widget.text:find("%d%d:%d%d"), "audi bar missing the time: " .. dash.battery_widget.text)
+    assert(dash.battery_widget.text:find("90%", 1, true), dash.battery_widget.text)
+    assert(dash.battery_widget.overlap_offset[2] == dash.exit_button.overlap_offset[2], "audi bar split rows")
+    battery.level = 40
+    dash:refresh()
+    assert(dash.battery_widget.text:find("40%", 1, true), "audi bar didn't follow the battery")
+    battery.level = 90
     dash:toggleAudi()
     assert(dash.mode == "dash", "didn't return to Dash")
+    assert(dash.battery_widget.text == "Battery 90% (charging)", dash.battery_widget.text)
     assert(findText(dash[1], "Inbox"), "inbox missing after leaving Audi")
     assert(not dash.audi_button.preselect, "Audi still looks selected")
 end)
@@ -963,7 +985,7 @@ test("sleep opens Dash instead, while the setting is on", function()
     tapExit() -- the previous test leaves it open
     local count, sleeps = #shown, real_sleeps
     UIManager:suspend()
-    assert(#shown == count + 1 and dashboard().get_status, "dashboard not opened")
+    assert(#shown == count + 1 and dashboard().exit_button, "dashboard not opened")
     assert(real_sleeps == sleeps, "slept anyway")
     assert(PluginShare.pause_auto_suspend == true, "keep-awake not applied")
 end)
@@ -1020,7 +1042,7 @@ test("adds a Dash module to SimpleUI's home screen", function()
 
     local count = #shown
     widget:onTapDash()
-    assert(#shown == count + 1 and dashboard().get_status, "tap didn't open Dash")
+    assert(#shown == count + 1 and dashboard().exit_button, "tap didn't open Dash")
     tapExit()
 end)
 
@@ -1049,7 +1071,7 @@ test("an open request at startup opens Dash once, as after a deploy", function()
     Restarted:new{ ui = { menu = { registerToMainMenu = function() end } } }
     assert(not exists(request), "request not removed")
     runScheduled()
-    assert(#shown == before + 1 and shown[#shown].get_status, "Dash not opened")
+    assert(#shown == before + 1 and shown[#shown].exit_button, "Dash not opened")
     Restarted:new{ ui = { menu = { registerToMainMenu = function() end } } }
     runScheduled()
     assert(#shown == before + 1, "opened again by a second plugin instance")
