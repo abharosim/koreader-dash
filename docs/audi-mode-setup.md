@@ -24,7 +24,7 @@ With nothing current, the page says **暂无内容**.
 
 The same LaunchAgent as the briefing, `com.abharosim.koreader-dash.outbox`, watches this folder. It runs `scripts/outbox-send.sh`, which calls `scripts/audi-outbox-send.sh`. Log lines start with `audi-outbox:` in `~/Library/Logs/koreader-dash-outbox.log`.
 
-A file modified less than 5 seconds ago is skipped. Write to a temporary name that does not end in `.md`, then rename it to `.md`. If the Kindle is unreachable (Dash closed, asleep, or off Wi-Fi), the file stays put and the next run retries. The job cannot wake a Kindle that was suspended with the power button.
+Writing `name.md` straight into the folder is fine. The producer does not have to stage a temp file. Before a send, the job samples the file's size and modification time, waits about 2 seconds, and samples again. It sends only when both are unchanged and the file was not modified in the last 5 seconds. A file that is still changing, or was just modified, stays in place for the next run. It is not moved to `failed/`. A rename from a dotfile such as `.name.tmp` to `name.md` still works; dotfiles are ignored. If the Kindle is unreachable (Dash closed, asleep, or off Wi-Fi), the file stays put and the next run retries. The job cannot wake a Kindle that was suspended with the power button.
 
 ## 3. Frontmatter
 
@@ -72,11 +72,11 @@ scripts/audi-push.sh --title "测试第 12 条" --id audi-test-12 --ref 12 --sou
 EOF
 ```
 
-The same note through the drop folder:
+The same note through the drop folder, written directly:
 
 ```sh
 mkdir -p ~/kdash-audi
-cat > ~/kdash-audi/.audi-test-12.tmp << 'EOF'
+cat > ~/kdash-audi/audi-test-12.md << 'EOF'
 ---
 id: audi-test-12
 ref: 12
@@ -90,10 +90,9 @@ source: DeepSeek
 - 第一点
 - 第二点
 EOF
-mv ~/kdash-audi/.audi-test-12.tmp ~/kdash-audi/audi-test-12.md
 ```
 
-Within about 5–15 seconds the log should contain `audi-outbox: ... sent audi-test-12`, the file should be in `~/kdash-audi/sent/`, and the Kindle should open Audi and full-refresh `#12`. It should not appear in the inbox. Dropping another file with the same id and a changed body updates the screen and keeps ref 12.
+Staging `.audi-test-12.tmp` and then `mv` to `audi-test-12.md` is also fine. After the file has stopped changing, the next outbox run should log `audi-outbox: ... sent audi-test-12`, move the file to `~/kdash-audi/sent/`, and the Kindle should open Audi and full-refresh `#12`. It should not appear in the inbox. Dropping another file with the same id and a changed body updates the screen and keeps ref 12.
 
 ```sh
 scripts/audi-push.sh --clear

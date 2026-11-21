@@ -283,7 +283,7 @@ curl -X POST "$KDASH_URL/v1/audi" \
   -d '{"id":"audi-test-12","ref":12,"title":"DeepSeek review","source":"DeepSeek","body":"## Summary\n\n- First point"}'
 ```
 
-The Mac sender is `scripts/audi-push.sh`. Files dropped in `~/kdash-audi/` are delivered by the same launchd job as the morning briefing. See [docs/audi-mode-setup.md](docs/audi-mode-setup.md).
+The Mac sender is `scripts/audi-push.sh`. Files dropped in `~/kdash-audi/` are delivered by the same launchd job as the morning briefing. Writing `name.md` directly is fine: the job sends a file only after its size and modification time are unchanged across about 2 seconds, and a file that is still changing stays put instead of moving to `failed/`. A rename from a dotfile such as `.name.tmp` still works. See [docs/audi-mode-setup.md](docs/audi-mode-setup.md).
 
 ### Errors
 

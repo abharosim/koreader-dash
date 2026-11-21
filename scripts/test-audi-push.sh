@@ -215,6 +215,9 @@ title: Retry
 later
 EOF
 perl -e 'utime time-30, time-30, $ARGV[0]' "$KDASH_AUDI/retry-me.md"
+# fresh.md is still in the folder from the previous run. Keep it younger than the
+# stability window so this run retries retry-me instead of stopping on fresh.md.
+perl -e 'utime time, time, $ARGV[0]' "$KDASH_AUDI/fresh.md"
 FAKE_CURL_MODE=down
 log=$("$ROOT/scripts/audi-outbox-send.sh" 2>&1)
 if [ -f "$KDASH_AUDI/retry-me.md" ] && printf '%s' "$log" | grep -q "audi-outbox:.*will retry retry-me"; then
@@ -237,6 +240,38 @@ if [ -f "$KDASH_AUDI/failed/bad.md" ] && printf '%s' "$log" | grep -q "audi-outb
     ok "a bad drop file is moved to failed"
 else
     bad "a bad drop file is moved to failed" "$log"
+fi
+
+# A direct copy that is still growing must stay put. Its mtime is old on purpose,
+# so the "just written" rule alone would send a half-written file.
+grow="$WORK/kdash-audi-grow"
+mkdir -p "$grow"
+printf '%s\n' "partial" > "$grow/growing.md"
+perl -e 'utime time-30, time-30, $ARGV[0]' "$grow/growing.md"
+printf '%s\n' "hidden" > "$grow/.hidden.md"
+printf '%s\n' "temp" > "$grow/.note.tmp"
+perl -e 'utime time-30, time-30, $ARGV[0]' "$grow/.hidden.md" "$grow/.note.tmp"
+(
+    sleep 0.3
+    i=0
+    while [ "$i" -lt 8 ]; do
+        printf '%s\n' "more $i" >> "$grow/growing.md"
+        i=$((i + 1))
+        sleep 0.2
+    done
+) &
+grow_pid=$!
+before=$(calls)
+FAKE_CURL_MODE=201
+log=$(KDASH_AUDI="$grow" "$ROOT/scripts/audi-outbox-send.sh" 2>&1)
+wait "$grow_pid" 2>/dev/null || true
+if [ -f "$grow/growing.md" ] && [ ! -e "$grow/sent/growing.md" ] && [ ! -e "$grow/failed/growing.md" ] \
+    && [ -f "$grow/.hidden.md" ] && [ -f "$grow/.note.tmp" ] \
+    && [ "$(calls)" -eq "$before" ] \
+    && printf '%s' "$log" | grep -q "audi-outbox:.*still changing"; then
+    ok "a growing .md file is left in place, not sent or failed"
+else
+    bad "a growing .md file is left in place, not sent or failed" "$log"
 fi
 
 # 11. The briefing outbox job is what launchd runs, so it must deliver Audi too.
