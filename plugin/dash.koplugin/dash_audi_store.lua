@@ -1,6 +1,10 @@
--- Audi history, separate from the inbox. The newest entry is last.
--- Bodies live in their own files, named by sequence number, so an id can contain ":".
+-- Audi history. Bodies live in their own files, named by sequence number, so an id can contain ":".
+-- The HTTP inbox never includes these entries. The dash home list reads them from here.
 -- Has no KOReader imports. Saved as JSON so network text is never run as code.
+--
+-- read_at is set when that entry is shown in Audi fullscreen. inbox_hidden is set by
+-- action: clear so those rows leave the home list; the archive itself stays.
+-- read_state 1 means read_at has been stored. Older files are migrated on load.
 
 local json = require("json")
 local Markdown = require("dash_markdown")
@@ -70,6 +74,7 @@ function AudiStore.new(opts)
         current_id = nil,
         pending_show = false,
         unseen = 0,
+        read_state = 1,
         dirty = false,
         warning = nil,
     }, AudiStore)
@@ -80,6 +85,17 @@ function AudiStore:_touch(info)
     if self.on_change then
         self.on_change(info)
     end
+end
+
+-- The Audi button badge. Hidden rows are off the home list, so they don't count.
+function AudiStore:_syncUnseen()
+    local count = 0
+    for _, entry in ipairs(self.entries) do
+        if not entry.read_at and not entry.inbox_hidden then
+            count = count + 1
+        end
+    end
+    self.unseen = count
 end
 
 function AudiStore:_bodyPath(entry)
@@ -237,7 +253,7 @@ function AudiStore:_create(fields, title, body)
     table.insert(self.entries, entry)
     self.current_id = entry.id
     self.pending_show = true
-    self.unseen = self.unseen + 1
+    self:_syncUnseen()
     self:_touch({ kind = "created", show = true, id = entry.id })
     return entry, { created = true, updated = false, cleared = false }
 end
@@ -249,6 +265,9 @@ function AudiStore:_update(entry, fields, title, body)
         entry.source = fields.source
     end
     entry.received_at = now
+    -- A new body is unread again, and clear no longer keeps it off the home list.
+    entry.read_at = nil
+    entry.inbox_hidden = nil
     if fields.created_at ~= nil then
         self:_applyTime(entry, fields.created_at, now)
     else
@@ -261,7 +280,7 @@ function AudiStore:_update(entry, fields, title, body)
     end
     self.current_id = entry.id
     self.pending_show = true
-    self.unseen = self.unseen + 1
+    self:_syncUnseen()
     self:_touch({ kind = "updated", show = true, id = entry.id })
     return entry, { created = false, updated = true, cleared = false }
 end
@@ -270,19 +289,54 @@ function AudiStore:clear()
     local changed = self.current_id ~= nil or self.pending_show or self.unseen ~= 0
     self.current_id = nil
     self.pending_show = false
-    self.unseen = 0
+    -- The archive stays. The home list drops every row until a later create or update.
+    for _, entry in ipairs(self.entries) do
+        if not entry.inbox_hidden then
+            entry.inbox_hidden = true
+            changed = true
+        end
+    end
+    self:_syncUnseen()
     if changed then
         self:_touch({ kind = "cleared", show = true })
     end
     return nil, { cleared = true, created = false, updated = false }
 end
 
--- Clears the unseen badge once the entry is on screen. Does not ask for another refresh.
-function AudiStore:markShown()
-    if self.unseen == 0 and not self.pending_show then
+-- The entry now on the Audi screen is read. Other entries stay unread.
+-- Does not ask for another refresh (kind "shown").
+function AudiStore:markDisplayed(id)
+    local entry = self:get(id)
+    if not entry then
         return false
     end
-    self.unseen = 0
+    local changed = false
+    if not entry.read_at then
+        entry.read_at = self.now()
+        changed = true
+    end
+    if self.pending_show and self.current_id == entry.id then
+        self.pending_show = false
+        changed = true
+    end
+    if not changed then
+        return false
+    end
+    self:_syncUnseen()
+    self:_touch({ kind = "shown", show = false, id = entry.id })
+    return true
+end
+
+-- Marks the current entry read once Audi fullscreen is showing it.
+-- With nothing current (the idle line), only a pending flag is cleared.
+function AudiStore:markShown()
+    local entry = self:current()
+    if entry then
+        return self:markDisplayed(entry.id)
+    end
+    if not self.pending_show then
+        return false
+    end
     self.pending_show = false
     self:_touch({ kind = "shown", show = false })
     return true
@@ -308,6 +362,7 @@ function AudiStore:delete(id)
         self.current_id = nil
         self.pending_show = false
     end
+    self:_syncUnseen()
     self:_touch({ kind = "deleted", show = false, id = id })
     return true
 end
@@ -330,6 +385,19 @@ function AudiStore:load()
         if self.current_id and not self:get(self.current_id) then
             self.current_id = nil
         end
+        -- Files written before read_at existed: treat saved history as already read,
+        -- except an entry that arrived and was never shown.
+        if data.read_state ~= 1 then
+            for _, entry in ipairs(self.entries) do
+                local pending = self.pending_show and entry.id == self.current_id
+                if not pending and not entry.read_at then
+                    entry.read_at = entry.received_at or entry.display_at or 0
+                end
+            end
+            self.dirty = true
+        end
+        self.read_state = 1
+        self:_syncUnseen()
     else
         os.rename(self.path, self.path .. ".bad")
         self.warning = "Saved Audi data was unreadable and has been reset"
@@ -347,6 +415,7 @@ function AudiStore:flush()
         current_id = self.current_id,
         pending_show = self.pending_show,
         unseen = self.unseen,
+        read_state = self.read_state or 1,
     }))
     if not ok then
         return false, err
