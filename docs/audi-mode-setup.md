@@ -2,7 +2,7 @@
 
 How a long Markdown note reaches the Kindle's Audi view, and how to try it. This file has no token or secret values in it, and none should ever be added.
 
-Audi is a read-only second screen. The Kindle does not send a decision back: there is no reply button and no reply API. Entries are stored apart from inbox messages, so they do not use the 100-message cap, `GET /v1/inbox` does not return them, and Read all does not touch them. The dash home Inbox list does show them, next to unread briefings, newest first. The morning briefing is unchanged (`--source dada --type briefing.daily` into `~/kdash-outbox/`).
+Audi is a read-only second screen. The Kindle does not send a decision back: there is no reply button and no reply API. Entries are stored apart from inbox messages, so they do not use the 100-message cap and `GET /v1/inbox` does not return them. The home Inbox lists the unread ones beside unread briefings. **Read all** marks those listed rows read and does not delete them. The morning briefing is unchanged (`--source dada --type briefing.daily` into `~/kdash-outbox/`).
 
 ## 1. What the Kindle shows
 
@@ -10,7 +10,7 @@ The bottom bar's left side is the time and the battery, such as `02:11  ·  90%`
 
 With nothing current, the page says **暂无内容**.
 
-**Home Inbox.** Unread briefings and Audi entries share one list, newest first. An Audi row is marked **Audi** and `#12`. Until that entry has been shown in Audi fullscreen it also shows `● 待看`. A tap on a briefing opens the usual reader and does not open Audi. A tap on an Audi row opens Audi fullscreen on that entry, which marks it read. The row stays in the list afterwards. Briefings never open fullscreen by themselves.
+**Home Inbox.** Unread briefings and unread Audi entries share one list, newest first. An Audi row is marked **Audi** and `#12`, and shows `● 待看` until it is read. Each row has **Read**, which removes that row. **Read all** in the Inbox header marks every listed briefing and Audi entry read, and the list then says **Inbox empty**. A tap on a briefing opens the reader, which has **Mark as read**. A tap on an Audi row opens Audi fullscreen and marks that entry read, so it leaves the list. Read entries stay stored: briefings remain in the inbox store, and Audi entries remain in the history the Audi button pages through. Briefings never open fullscreen by themselves.
 
 **Lock.** Holding Lock still locks the dashboard. While locked, you can scroll the Audi entry that is on screen. You cannot page to another entry, leave Audi mode, or tap Exit. Holding Locked unlocks. A new entry still switches to Audi and full-refreshes when auto-switch is on, including while locked. The 10-minute idle return below still runs while locked.
 

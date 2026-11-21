@@ -47,7 +47,7 @@ local function ids(items)
     return table.concat(list, ",")
 end
 
-test("the merged inbox is newest first and keeps read Audi rows", function()
+test("the merged inbox is newest first and omits read rows", function()
     local items = Inbox.merge({
         { id = "old-brief", title = "Old", received_at = 100, priority = "high" },
         { id = "new-brief", title = "New", received_at = 300, source = "dada", type = "briefing.daily" },
@@ -57,13 +57,11 @@ test("the merged inbox is newest first and keeps read Audi rows", function()
         { id = "audi-new", ref = 4, title = "Later", display_at = 350 },
         { id = "audi-cleared", ref = 1, title = "Gone", display_at = 500, inbox_hidden = true },
     })
-    eq(ids(items), "audi:audi-new,briefing:new-brief,audi:audi-old,briefing:old-brief", "order")
+    eq(ids(items), "audi:audi-new,briefing:new-brief,briefing:old-brief", "order")
     eq(items[1].unread, true, "new audi unread")
     eq(items[1].ref, 4, "ref")
-    eq(items[3].unread, false, "read audi stays")
     eq(Inbox.unreadCount(items), 3, "unread")
-    -- High priority no longer jumps ahead of a newer row.
-    eq(items[4].id, "old-brief", "old high-priority briefing is last")
+    eq(items[3].id, "old-brief", "old high-priority briefing is last")
 end)
 
 test("equal timestamps sort by kind then id", function()
@@ -121,9 +119,13 @@ test("displaying an Audi entry marks that entry read and leaves the others", fun
     assert(not store:markDisplayed("b"))
     eq(#events, before + 1, "second display does not notify")
     local items = Inbox.merge({}, store.entries)
-    eq(items[1].id, "b", "newest")
-    eq(items[1].unread, false, "shown row")
-    eq(items[2].unread, true, "other row")
+    eq(#items, 1, "shown entry left the list")
+    eq(items[1].id, "a", "unread one stays")
+    eq(#store.entries, 2, "history kept")
+    store:markAllRead()
+    eq(Inbox.merge({}, store.entries)[1], nil, "mark all empties the list")
+    eq(#store.entries, 2, "history still kept")
+    eq(store:get("a").read_at ~= nil, true, "marked")
 end)
 
 test("an audi file from before read_at treats history as already read", function()
@@ -137,10 +139,9 @@ test("an audi file from before read_at treats history as already read", function
     eq(store.read_state, 1, "migrated")
     eq(store.unseen, 1, "badge")
     local items = Inbox.merge({}, store.entries)
-    eq(#items, 2, "both listed")
-    eq(items[1].id, "fresh", "newer first")
+    eq(#items, 1, "already-read history is not listed")
+    eq(items[1].id, "fresh", "pending stays")
     eq(items[1].unread, true, "pending unread")
-    eq(items[2].unread, false, "old read")
 end)
 
 test("the idle window is 10 minutes and resume uses the same rule", function()

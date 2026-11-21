@@ -327,6 +327,26 @@ function AudiStore:markDisplayed(id)
     return true
 end
 
+-- Marks every listed entry read. The archive stays, so Audi mode can still page it.
+-- Clears a pending auto-open: the inbox was emptied on purpose.
+function AudiStore:markAllRead()
+    local now = self.now()
+    local count = 0
+    for _, entry in ipairs(self.entries) do
+        if not entry.inbox_hidden and not entry.read_at then
+            entry.read_at = now
+            count = count + 1
+        end
+    end
+    if count == 0 and not self.pending_show then
+        return 0
+    end
+    self.pending_show = false
+    self:_syncUnseen()
+    self:_touch({ kind = "shown", show = false })
+    return count
+end
+
 -- Marks the current entry read once Audi fullscreen is showing it.
 -- With nothing current (the idle line), only a pending flag is cleared.
 function AudiStore:markShown()

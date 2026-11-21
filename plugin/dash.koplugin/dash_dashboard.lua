@@ -127,7 +127,7 @@ local AUDI_INPUT = {
     onBackward = true,
 }
 
--- One inbox line. A briefing has a Read button; an Audi row has an Audi tag and its ref.
+-- One inbox line. Both kinds have a Read button, which drops that row from the list.
 -- A tap opens the item. The Read button is handled first by its own widget.
 local InboxRow = InputContainer:extend{
     width = nil,
@@ -160,7 +160,7 @@ function InboxRow:initBriefing()
         text_font_size = 20,
         width = math.floor(self.width * 0.17),
         show_parent = self.show_parent,
-        callback = function() self.on_read(message) end,
+        callback = function() self.on_read(self.item) end,
     }
     local text_width = self.width - read_button:getSize().w - Screen:scaleBySize(8)
     local is_high = message.priority == "high"
@@ -213,8 +213,14 @@ end
 
 function InboxRow:initAudi()
     local entry = self.item.entry
-    local tag_width = math.floor(self.width * 0.17)
-    local text_width = self.width - tag_width - Screen:scaleBySize(8)
+    local read_button = Button:new{
+        text = _("Read"),
+        text_font_size = 20,
+        width = math.floor(self.width * 0.17),
+        show_parent = self.show_parent,
+        callback = function() self.on_read(self.item) end,
+    }
+    local text_width = self.width - read_button:getSize().w - Screen:scaleBySize(8)
     local meta = messageTime({ received_at = entry.display_at or entry.received_at })
     local source = displayValue(entry.source)
     if source then
@@ -222,8 +228,19 @@ function InboxRow:initAudi()
     end
 
     local lines = VerticalGroup:new{ align = "left" }
+    table.insert(lines, TextWidget:new{
+        text = "Audi",
+        face = Font:getFace("infofont", 14),
+        bold = true,
+        max_width = text_width,
+    })
+    table.insert(lines, TextWidget:new{
+        text = "#" .. tostring(entry.ref),
+        face = Font:getFace("infofont", 14),
+        bold = true,
+        max_width = text_width,
+    })
     if self.item.unread then
-        -- A dot plus 待看, so an unread Audi row is not mistaken for a briefing.
         table.insert(lines, TextWidget:new{
             text = "● 待看",
             face = Font:getFace("infofont", 14),
@@ -255,29 +272,13 @@ function InboxRow:initAudi()
         max_width = text_width,
     })
 
-    local tag = VerticalGroup:new{
-        align = "center",
-        TextWidget:new{
-            text = "Audi",
-            face = Font:getFace("infofont", 16),
-            bold = true,
-        },
-        TextWidget:new{
-            text = "#" .. tostring(entry.ref),
-            face = Font:getFace("infofont", 16),
-            bold = true,
-        },
-    }
     self[1] = HorizontalGroup:new{
         LeftContainer:new{
             dimen = Geom:new{ w = text_width, h = self.height },
             lines,
         },
         HorizontalSpan:new{ width = Screen:scaleBySize(8) },
-        CenterContainer:new{
-            dimen = Geom:new{ w = tag_width, h = self.height },
-            tag,
-        },
+        read_button,
     }
 end
 
@@ -513,8 +514,6 @@ end
 function Dashboard:buildInbox(width, available_height)
     local items = self:inboxItems()
     local unread = Inbox.unreadCount(items)
-    -- Read all only marks briefings. Audi rows stay until they are shown, or a clear hides them.
-    local briefing_unread = self.store:unreadCount()
     local row_height = math.floor(self.dimen.h * 0.12)
     local title_height = Screen:scaleBySize(36)
     local per_page = math.max(1, math.floor((available_height - title_height) / (row_height + 1)))
@@ -523,7 +522,7 @@ function Dashboard:buildInbox(width, available_height)
 
     local title = unread > 0 and string.format(_("Inbox (%d unread)"), unread) or _("Inbox")
     local controls = HorizontalGroup:new{ align = "center" }
-    if briefing_unread > 0 then
+    if #items > 0 then
         self.read_all_button = Button:new{
             text = _("Read all"),
             text_font_size = 18,
@@ -553,7 +552,7 @@ function Dashboard:buildInbox(width, available_height)
     if #items == 0 then
         table.insert(inbox, VerticalSpan:new{ width = Screen:scaleBySize(12) })
         table.insert(inbox, TextWidget:new{
-            text = _("No new messages"),
+            text = _("Inbox empty"),
             face = Font:getFace("infofont", 20),
         })
         return inbox
@@ -572,7 +571,7 @@ function Dashboard:buildInbox(width, available_height)
             item = item,
             show_parent = self,
             on_open = function(opened) self:openInboxItem(opened) end,
-            on_read = function(message) self:markRead(message) end,
+            on_read = function(item) self:markInboxRead(item) end,
         })
     end
     return inbox
@@ -975,12 +974,15 @@ function Dashboard:resumeAudiIdle()
 end
 
 function Dashboard:confirmReadAll()
-    local count = self.store:unreadCount()
+    local count = #self:inboxItems()
     UIManager:show(ConfirmBox:new{
         text = string.format(_("Mark all %d messages as read?"), count),
         ok_text = _("Read all"),
         ok_callback = function()
             self.store:markAllRead()
+            if self.audi then
+                self.audi:markAllRead()
+            end
             self.page = 1
             self:scheduleRebuild(0.05)
         end,
@@ -990,6 +992,22 @@ end
 function Dashboard:markRead(message)
     self.store:setRead(message.id, true)
     self:scheduleRebuild(0.05)
+end
+
+-- Read drops the row. The briefing stays in the inbox store, and the Audi
+-- entry stays in Audi history.
+function Dashboard:markInboxRead(item)
+    if not item then
+        return
+    end
+    if item.kind == "audi" then
+        if self.audi and item.entry then
+            self.audi:markDisplayed(item.entry.id)
+        end
+        self:scheduleRebuild(0.05)
+    else
+        self:markRead(item.message)
+    end
 end
 
 function Dashboard:openInboxItem(item)

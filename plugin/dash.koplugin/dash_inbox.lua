@@ -18,7 +18,8 @@ local function timeOf(entry)
 end
 
 -- messages: inbox messages (read ones are skipped).
--- entries: Audi store entries (inbox_hidden ones are skipped).
+-- entries: Audi store entries. Hidden or already-read ones are skipped.
+-- Read entries stay in the Audi store so the Audi button can still page through them.
 -- Newest first. Equal times break by kind, then id, so the order does not depend on
 -- the sort being stable.
 function Inbox.merge(messages, entries)
@@ -37,7 +38,7 @@ function Inbox.merge(messages, entries)
     end
     if type(entries) == "table" then
         for _, entry in ipairs(entries) do
-            if type(entry) == "table" and not entry.inbox_hidden then
+            if type(entry) == "table" and not entry.inbox_hidden and not entry.read_at then
                 items[#items + 1] = {
                     kind = "audi",
                     at = timeOf(entry),
