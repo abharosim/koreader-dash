@@ -128,7 +128,9 @@ With an entry, the header shows the title, then `#12 · DeepSeek · 19:12` (the 
 
 The device keeps the last 20 entries (`AUDI_HISTORY_LIMIT` in `dash_audi_store.lua`; `audi_history_limit` in `dash_config.json` overrides it). A 21st entry drops the oldest. There is no "unread, so keep it" rule. Dropped entries leave the home list because they are gone from the store.
 
-The body is denser than the inbox reader. The Audi page margin is 8 (the dashboard's is 16) and the gap under the header is 4 (it was 8). The body face defaults to 18 (it was 20). **A-** and **A+** in the Audi header, including on the idle screen, step that size by 2, from 14 to 28. The new size is saved as `dash_audi_font_size` in KOReader's settings and the body is repaginated immediately. A missing setting means 18.
+The body is denser than the inbox reader. The Audi page margin is 4 (the rest of Dash uses 16). The gap under the header is 2. MuPDF's page and body margins are set to 0, so the body text starts on the same left edge as the title, with no gap above the first heading. The scrollbar stays; the gutter beside it is 2 (the widget's default is 12) and the bar itself is 4 wide (the default is 6). The header is only the title and the `#ref` line. `<` `>` and `n/N` sit at the top right.
+
+The body face defaults to 18 (it was 20). **Tools → Dash → Audi font size** opens a spinner from 14 to 28, step 2. The value is saved as `dash_audi_font_size`. If Audi is open, the body repaginates immediately; otherwise the next time Audi opens. A missing setting means 18.
 
 **Open Audi mode for new items** (Dash menu, saved as `dash_audi_auto_switch`) defaults to on. When a new entry arrives, or an existing one is updated, Dash closes an open inbox reader, switches to Audi mode from whatever view is showing, shows that entry, and does a `full` refresh. The same happens while the screen is locked: the new entry is shown and can be scrolled, and history paging, leaving Audi and Exit stay blocked. With the setting off, Dash stays where it is: the entry is in the home Inbox with `● 待看`, and the Audi button reads `Audi·N` until you open it. A retry of the same id with the same title and body does not refresh or switch. After the power button, if auto-switch is on and an entry arrived that was never shown, resume opens Audi mode and full-refreshes.
 
@@ -147,7 +149,7 @@ Showing an entry in Audi fullscreen sets its `read_at`. That is the only way an 
 | State or inbox changed; changes are grouped over 1 second | `partial` |
 | A new or updated Audi entry is shown, or Audi mode is opened or closed | `full` |
 | Audi has been idle for 10 minutes, or resume finds that it has | `full`, back on the dash home |
-| The Audi body size changes | `full`, and the body is repaginated |
+| Audi font size is changed while Audi is open | `full`, and the body is repaginated |
 | Every 60 minutes | `full`, to clear ghosting |
 
 ---

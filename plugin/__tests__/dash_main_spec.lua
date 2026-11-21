@@ -125,6 +125,7 @@ local stubs = {
     ["ui/widget/linewidget"] = class(),
     ["ui/widget/titlebar"] = class(),
     ["ui/widget/scrollhtmlwidget"] = class(),
+    ["ui/widget/spinwidget"] = class(),
     ["libs/libkoreader-lfs"] = {
         attributes = function(path) return io.open(path .. "/.") and "directory" or nil end,
         -- os.execute is replaced by a recorder in this file, so call the real one.
@@ -621,7 +622,11 @@ test("a new Audi entry auto-switches with a full refresh and is not in the inbox
     assert(dash.audi_index == 1, "not showing the only entry")
     assert(findText(dash[1], "1/1"), "position missing")
     assert(dash.audi_scroll.default_font_size == 18, "body font should default to 18, was 20")
-    assert(dash.audi_content_margin == 8, "audi margin should be 8, was 16")
+    assert(dash.audi_content_margin == 4, "audi margin should be 4")
+    assert(dash.audi_scroll.text_scroll_span == 2, "scrollbar gutter")
+    assert(dash.audi_scroll.scroll_bar_width == 4, "scrollbar width")
+    assert(not findText(dash[1], "A+"), "font controls are still on the Audi page")
+    assert(not findText(dash[1], "A-"), "font controls are still on the Audi page")
     assert(dash.audi:get("audi-test-12").read_at, "a displayed entry stays unread")
     dash:toggleAudi()
     assert(dash.mode == "dash", "didn't return home")
@@ -797,29 +802,32 @@ test("an unshown Audi entry is tagged in the inbox and opens fullscreen when tap
     reader_settings.dash_audi_auto_switch = nil
 end)
 
-test("Audi font A- and A+ repaginate and stick", function()
+test("Audi font size is set from the Dash menu and repaginates while Audi is open", function()
+    local item = items.dash.sub_item_table[4]
+    assert(item and item.text == "Audi font size", item and item.text)
     local dash = dashboard()
     if dash.mode ~= "audi" then
         dash:toggleAudi()
     end
-    assert(dash.audi_font_smaller and dash.audi_font_larger, "no font controls")
-    assert(dash:audiFontSize() == 18, "default")
-    assert(dash.audi_scroll and dash.audi_scroll.default_font_size == 18, "scroll size")
-    dash.audi_font_larger.callback()
-    assert(dash:audiFontSize() == 20, "didn't step up")
-    assert(reader_settings.dash_audi_font_size == 20, "not saved")
-    assert(dash.audi_scroll.default_font_size == 20, "scroll didn't repaginate")
-    assert(dash.audi_scroll.css:find("line-height: 1.2", 1, true), "audi css not tightened")
-    dash.audi_font_smaller.callback()
-    assert(dash:audiFontSize() == 18, "didn't step down")
-    reader_settings.dash_audi_font_size = 28
-    dash:rebuild("full")
-    dash.audi_font_larger.callback()
-    assert(dash:audiFontSize() == 28, "stepped past the max")
-    reader_settings.dash_audi_font_size = 14
-    dash:rebuild("full")
-    dash.audi_font_smaller.callback()
-    assert(dash:audiFontSize() == 14, "stepped past the min")
+    assert(dash.audi_scroll, "need a body to repaginate")
+    assert(dash.audi_scroll.css:find("@page { margin: 0; padding: 0; }", 1, true), "page css")
+    assert(dash.audi_scroll.css:find("html, body { margin: 0; padding: 0;", 1, true), "body css")
+    local shown_before = #shown
+    item.callback()
+    local spin = lastShown()
+    assert(#shown == shown_before + 1 and spin ~= dash, "spin widget didn't open")
+    assert(spin.value == 18, "default value")
+    assert(spin.value_min == 14 and spin.value_max == 28 and spin.value_step == 2, "range")
+    assert(spin.title_text == "Audi font size", spin.title_text)
+    spin.value = 22
+    spin.callback(spin)
+    assert(reader_settings.dash_audi_font_size == 22, "not saved")
+    assert(dash.mode == "audi", "left Audi")
+    assert(dash.audi_scroll.default_font_size == 22, "open Audi didn't repaginate")
+    spin.value = 100
+    spin.callback(spin)
+    assert(dash:audiFontSize() == 28, "didn't clamp")
+    assert(dash.audi_scroll.default_font_size == 28, "clamped size not applied")
     reader_settings.dash_audi_font_size = nil
     dash:rebuild("full")
     assert(dash:audiFontSize() == 18, "cleared setting didn't restore the default")

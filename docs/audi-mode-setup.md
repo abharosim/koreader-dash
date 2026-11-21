@@ -6,7 +6,7 @@ Audi is a read-only second screen. The Kindle does not send a decision back: the
 
 ## 1. What the Kindle shows
 
-The bottom bar is `IP:port`, then **Audi**, **Lock** and **Exit**, each button about 15% of the screen width. Audi toggles the view. With an entry, the header shows the title, `#12 · DeepSeek · 19:12` (spoken ref, source, and Eastern time via `messageTime()`), and `<` `>` with `3/12` to move through the last 20 entries. **A-** and **A+** sit on that header line (and on the idle screen). The body scrolls like the inbox reader, with tighter margins so more text fits. Links show their text, images show their alt text, and raw HTML is shown as text.
+The bottom bar is `IP:port`, then **Audi**, **Lock** and **Exit**, each button about 15% of the screen width. Audi toggles the view. With an entry, the header is two short lines: the title, then `#12 · DeepSeek · 19:12` (spoken ref, source, and Eastern time via `messageTime()`). `<` `>` and `3/12` sit at the top right and are the only controls there. The body starts on the same left edge as the title. The page inset is 4, the HTML page and body margins are 0, and the scrollbar gutter is 2. Links show their text, images show their alt text, and raw HTML is shown as text.
 
 With nothing current, the page says **暂无内容**.
 
@@ -18,7 +18,7 @@ With nothing current, the page says **暂无内容**.
 
 **Idle return.** After 10 minutes in Audi with no tap, swipe, key or page turn, Dash leaves Audi, returns to the home screen, and full-refreshes. The entry stays in the Inbox. Any of those inputs starts the 10 minutes again, and so does a new or updated entry. Leaving Audi, tapping Exit, or suspending cancels the timer. On wake, if those 10 minutes already passed, Dash is on the home screen; a new entry that arrived while asleep still opens Audi when auto-switch is on. The wait is 600 seconds (`dash_audi_idle.lua`). A whole number `audi_idle_seconds` in `koreader/settings/dash_config.json` overrides it (1 to 86400). You do not need to add that key.
 
-**Font size.** The body face starts at 18 (it was 20). The page margin is 8 (the rest of Dash uses 16) and the gap under the header is 4 (it was 8). In Audi mode, **A-** and **A+** on the header change the size by 2, between 14 and 28, save it as `dash_audi_font_size` in KOReader's settings, and repaginate immediately. Nothing to migrate: a device that has never set it uses 18.
+**Font size.** The body face starts at 18. Change it from **Tools → Dash → Audi font size**. That opens a spinner, 14 to 28, step 2, saved as `dash_audi_font_size` in KOReader's settings. If Audi is already open, the body repaginates when you set it. Otherwise it applies the next time Audi opens. A device that has never set it uses 18. The Audi page itself has no font buttons.
 
 **Clear and replace.** `action: clear` (and `POST /v1/audi/clear`, and `scripts/audi-push.sh --clear`) still shows **暂无内容** and keeps the archive. Those entries disappear from the home Inbox until a later update. `replace_id`, or the same id with a changed title or body, updates that entry in place (same id, same ref) and puts that row back. Sending the same title and body again does not.
 
